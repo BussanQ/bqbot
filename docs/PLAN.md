@@ -43,11 +43,11 @@
 - 启动时探测引擎（`--version`），没装的引擎在新建表单里不出现。
 
 ### Bot 之间转交（简化版已实现，提前于阶段 4）
-- 内置 stdio MCP 服务：`bqbot mcp <grant 文件>`，提供 `list_bots` 和 `ask_bot(name, question)`。它通过 127.0.0.1 随机端口回调正在运行的 app，每轮一个 bearer token。token 写在 0600 的临时 grant 文件里，不进 argv 和引擎配置；轮次结束时 token 作废、文件删除。
+- 内置 stdio MCP 服务：`bqbot mcp <grant 文件>`，提供 `list_bots`、`ask_bot(name, question)`、`list_threads`、`close_thread` 和 `list_room_targets`。它通过 127.0.0.1 随机端口回调正在运行的 app，每轮一个 bearer token。token 写在 0600 的临时 grant 文件里，不进 argv 和引擎配置；轮次结束时 token 作废、文件删除。
 - 只有回答用户的轮次能拿到 bqbot 转交工具；回答另一个 bot 的轮次不给，所以转交深度上限为 1。目标 bot 正忙时，转交请求与用户消息按 FIFO 排队。提问方停止时，排队或执行中的目标任务也会取消。审批服务使用独立的每轮 grant，在转交轮次中同样可用，审批模式继承提问方。
-- 目标 bot 在单独的会话里作答，不写进它和用户的主对话：每个“目标 × 提问方”一个会话，续接游标存在 `Bot.Handoffs[提问方 ID]`，transcript 存在 `handoffs/<目标>/<提问方>.ndjson`。同一个提问方再问时续接这个会话，换一个提问方就是另一个会话。删除任何一方时，对应的会话一起删掉。
-- 系统提示里列出其他 bot 的名字和人设摘要。提问方的聊天里显示“已转交给 X”；目标的聊天里只显示“正在回答 X 的提问（单独的会话）”和停止按钮，不显示问答内容。
-- 各引擎只放开这一个服务：claude 用 `--mcp-config` + `--strict-mcp-config` + `--allowedTools mcp__bqbot__ask_bot,mcp__bqbot__list_bots`；codex 用 `-c mcp_servers.bqbot.*`，`enabled_tools` 只开这两个工具，`default_tools_approval_mode="approve"`，`tool_timeout_sec=900`；pi 在 bot 目录写 `.pi/mcp.json`（`exposure: "direct"`，关闭 codemode），加上 `--approve`，并在 `--tools` 里加入 `mcp__bqbot__*` 两个工具。
+- 私人聊天的转交使用独立的“目标 × 提问方”线程，可在目标 Bot 下查看。已有 `Bot.Handoffs` 与 `handoffs/<目标>/<提问方>.ndjson` 原位迁移；关闭后再次转交会创建新线程。频道内转交留在本频道，使用频道共享记录和指令。删除任何一方时，对应私人转交线程一起清理。
+- 提问方的聊天显示“已转交给 X”。`ask_bot` 立即返回受理回执；目标完成后，服务自动在原线程或频道唤醒提问方续答。自动续答不能再次派发，显式停止、关闭或删除会取消关联任务。
+- 各引擎只开放 bqbot 自己的 MCP 服务。Claude、Codex、Pi 的工具白名单由同一份 `mcp.Tools` 定义生成；审批使用单独的 grant，管理工具按调用者的私人线程或当前频道限制可见范围。
 
 #### 和 OpenMausBot 的差别（后续阶段补齐）
 OpenMausBot 的转交工具是 `coordinate_bots`，配合 `list_bots`、`assignment_status`（见原项目 `server/drivers/agents-catalog-goldens/full.tools-list.json`、`server/runtime-coordinator.ts`）。当前简化版的差别和补齐计划：
@@ -55,14 +55,14 @@ OpenMausBot 的转交工具是 `coordinate_bots`，配合 `list_bots`、`assignm
 | 方面 | OpenMausBot | bqbot 当前 | 补齐阶段 |
 |---|---|---|---|
 | 工具 | `coordinate_bots`，一次 1 到 4 个 bot，按 ID 或唯一名字 | `ask_bot`，一次 1 个，按名字 | 阶段 4 |
-| 等待方式 | 提问方发完就结束本轮，结果回来时自动唤醒它继续 | 提问方在工具调用里同步等待，最长 15 分钟 | 阶段 3（需要线程和事件总线） |
+| 等待方式 | 提问方发完就结束本轮，结果回来时自动唤醒它继续 | 返回受理回执，结果到达后自动在原会话续答 | 阶段 3 已实现 |
 | 目标正忙 | 排在目标已有工作之后 | 与用户消息共用 FIFO；支持取消和循环等待检测 | 阶段 2 已实现；阶段 4 扩展协调模式 |
-| 作答位置 | 每个提问方一个常驻工作线程，`thread: "new"` 可开新线程，在侧栏显示为目标下的一行 | 每个提问方一个单独会话，界面里看不到内容 | 阶段 3（线程列表、`list_threads` / `close_thread`） |
+| 作答位置 | 每个提问方一个常驻工作线程，`thread: "new"` 可开新线程，在侧栏显示为目标下的一行 | 私人转交支持可查看线程、`thread: "new"`、`list_threads` / `close_thread`；频道转交留在本频道 | 阶段 3 已实现 |
 | 深度 | 上限 4 层，禁止回头问派活给自己的人或更上层 | 上限 1 层 | 阶段 4 |
 | 模式 | `consult`（只回答，不动手）、`reply: "none"`（单向通知）、`rework`（要求返工）、`done_when` | 只有问答 | 阶段 4 |
 | 状态查询 | `assignment_status` 只读查询进度和结果 | 没有 | 阶段 4 |
 | 权限 | Chief of Staff 的审批级别沿转交链向下传递 | 单层转交继承提问方的审批模式 | 阶段 2 已实现；多层链在阶段 4 |
-| 房间 | `list_room_targets`，在房间里默认发到本房间 | 没有 | 阶段 3（频道） |
+| 房间 | `list_room_targets`，在房间里默认发到本房间 | 频道成员发现及频道内转交 | 阶段 3 已实现 |
 
 ### 阶段 2：Harness 服务与审批（已实现）
 
@@ -75,12 +75,15 @@ OpenMausBot 的转交工具是 `coordinate_bots`，配合 `list_bots`、`assignm
 - [x] 转交排队：目标 bot 正忙时，把转交请求排在它当前的轮次之后，不再直接拒绝。
 - [x] grok CLI（ACP）驱动，以及 OpenAI 兼容 API 驱动（自带 transcript 重放）。
 
-### 阶段 3：像聊天应用一样管理 bot
-- 右键菜单：置顶、标为未读、改资料、复制、复制会话 ID、隐藏、删除；头像。
-- 频道（群聊）：独立 transcript、共享指令、工作目录、成员名单、@提及、回复规则（lead / Auto）。
-- 决策模型（OpenRouter）在 Auto 模式下挑选回复的 bot，不确定时回落到 lead。
-- 记忆召回、上下文压缩、transcript 搜索。
-- 线程：一个 bot 可以有多个对话线程，侧栏里显示在 bot 下面；转交会话迁移为可查看的线程，结果回来时唤醒提问方（见“和 OpenMausBot 的差别”）。
+### 阶段 3：像聊天应用一样管理 bot（已实现）
+
+使用方式、迁移与验证边界见 [阶段 3 说明](PHASE3.md)。Auto 路由通过本地模拟服务验证；OpenRouter 真实在线调用仍需账号环境验收。
+
+- [x] 右键菜单：置顶、标为未读、改资料、复制、复制会话 ID、隐藏与恢复、删除；自定义文字或 emoji 头像。
+- [x] 频道（群聊）：独立 transcript、共享指令、工作目录、成员名单、@提及、回复规则（lead / Auto）。
+- [x] 可配置 OpenRouter 决策模型在 Auto 模式下选择回复者，缺配置、请求失败或不确定时回落到 lead。
+- [x] 会话记忆管理与本地召回、保留原文的手动上下文压缩、transcript 全文搜索与跳转。
+- [x] 多个独立线程及侧栏列表；旧转交会话原位迁移；异步转交完成后自动唤醒提问方，支持新线程与关闭、取消。
 
 ### 阶段 4：工具与自动化
 - 自定义 MCP 服务器配置（stdio / http / sse）。

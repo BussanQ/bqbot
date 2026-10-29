@@ -19,6 +19,10 @@ import (
 
 // Bot is an agent the person chats with.
 type Bot struct {
+	Pinned       bool   `json:"pinned,omitempty"`
+	Unread       bool   `json:"unread,omitempty"`
+	Hidden       bool   `json:"hidden,omitempty"`
+	Avatar       string `json:"avatar,omitempty"`
 	Effort       string `json:"effort,omitempty"`
 	ApprovalMode string `json:"approval_mode,omitempty"`
 	ID           string `json:"id"`
@@ -36,6 +40,8 @@ type Bot struct {
 
 // Message is one entry of a bot's transcript.
 type Message struct {
+	BotID       string              `json:"bot_id,omitempty"`
+	ThreadID    string              `json:"thread_id,omitempty"`
 	Attachments []driver.Attachment `json:"attachments,omitempty"`
 	ID          string              `json:"id"`
 	Role        string              `json:"role"` // user, assistant, error
@@ -115,6 +121,9 @@ func (s *Store) SaveBot(bot Bot) error {
 	for i := range bots {
 		if bots[i].ID == bot.ID {
 			if !sameSession(bots[i], bot) {
+				if err := s.invalidateThreadCursorsLocked(bot); err != nil {
+					return err
+				}
 				bot.Cursor = ""
 				bot.Handoffs = nil
 			}
@@ -161,6 +170,9 @@ func (s *Store) DeleteBot(id string) error {
 	if err := s.deleteEvents(id, kept); err != nil {
 		return err
 	}
+	if err := s.deleteChatDataLocked(id); err != nil {
+		return err
+	}
 	return os.RemoveAll(filepath.Join(s.dir, "work", id))
 }
 
@@ -199,12 +211,16 @@ func (s *Store) AppendHandoff(botID, askerID string, m Message) error {
 }
 
 func (s *Store) appendTo(path string, m any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.appendLocked(path, m)
+}
+
+func (s *Store) appendLocked(path string, m any) error {
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -243,6 +259,10 @@ func (s *Store) HandoffTranscript(botID, askerID string) ([]Message, error) {
 func (s *Store) read(path string) ([]Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return readMessages(path)
+}
+
+func readMessages(path string) ([]Message, error) {
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil

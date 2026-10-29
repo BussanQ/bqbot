@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -147,6 +148,14 @@ type relay struct{}
 func (relay) Name() string   { return "relay" }
 func (relay) Binary() string { return "" }
 func (relay) Run(ctx context.Context, in driver.TurnInput, emit func(driver.Event)) error {
+	if strings.HasPrefix(in.Text, "Handoff completed by ") {
+		_, result, ok := strings.Cut(in.Text, "\n\n")
+		if !ok || in.MCP != nil {
+			return errors.New("invalid completion turn")
+		}
+		emit(driver.Event{Kind: driver.EvText, Text: "Bo said: " + result})
+		return nil
+	}
 	if in.MCP == nil {
 		return errors.New("no bqbot tools")
 	}
@@ -160,7 +169,13 @@ func (relay) Run(ctx context.Context, in driver.TurnInput, emit func(driver.Even
 	if err != nil {
 		return err
 	}
-	emit(driver.Event{Kind: driver.EvText, Text: "Bo said: " + ans})
+	var receipt struct {
+		Status string `json:"status"`
+	}
+	if json.Unmarshal([]byte(ans), &receipt) != nil || receipt.Status != "accepted" {
+		return errors.New("handoff was not accepted")
+	}
+	emit(driver.Event{Kind: driver.EvText, Text: "Waiting for Bo's reply."})
 	return nil
 }
 
@@ -184,8 +199,9 @@ func TestHandoffInChat(t *testing.T) {
 	tt.Click("Message")
 	tt.Type("ping")
 	tt.Key(0, ui.KeyEnter)
-	waitIdle(t, a, tt, posts)
-	if !tt.HasText("已转交给 Bo") || !tt.HasText("Bo said: Echo: Ada, another of the person's bots, asks you this. Your answer goes back to Ada, not to the person. ping") {
+	want := "Bo said: Echo: Ada, another of the person's bots, asks you this. Your answer goes back to Ada, not to the person. ping"
+	pumpUntil(t, tt, posts, func() bool { return !a.thread(ada.ID).busy && tt.HasText(want) })
+	if !tt.HasText("已转交给 Bo") || !tt.HasText(want) {
 		t.Fatalf("Ada's chat %q", tt.Texts())
 	}
 	// Bo's chat with the person does not get Ada's question or its answer.

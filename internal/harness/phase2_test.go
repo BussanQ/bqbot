@@ -464,7 +464,7 @@ func TestApprovalHTTPGrantsAllDepths(t *testing.T) {
 		if !grant.ApprovalOnly {
 			return errors.New("grant scope")
 		}
-		for _, route := range []string{"/ask_bot", "/list_bots"} {
+		for _, route := range []string{"/ask_bot", "/list_bots", "/list_threads", "/close_thread", "/list_room_targets"} {
 			req, _ := http.NewRequestWithContext(ctx, "POST", grant.URL+route, strings.NewReader(`{}`))
 			req.Header.Set("Authorization", "Bearer "+grant.Token)
 			resp, err := http.DefaultClient.Do(req)
@@ -509,15 +509,17 @@ func TestApprovalHTTPGrantsAllDepths(t *testing.T) {
 	r.st.SaveBot(b)
 	r.h.Send(a, "ask Bo edit")
 	u := r.wait(a.ID)
-	if u.Reply.Text != "got: approved" {
+	if !strings.Contains(u.Reply.Text, `"status":"accepted"`) {
 		t.Fatal(u.Reply)
 	}
+	waitJobs(t, r.h)
 	mu.Lock()
 	defer mu.Unlock()
 	if !reflect.DeepEqual(modes, []string{"auto-edit"}) {
 		t.Fatal(modes)
 	}
-	events, _ := r.st.Events(b.ID, a.ID)
+	thread, _ := r.st.HandoffThread(b.ID, a.ID)
+	events, _ := r.st.Events(thread.ID, "")
 	if len(events) == 0 {
 		t.Fatal("missing handoff events")
 	}
@@ -586,9 +588,7 @@ func TestCyclicHandoffsDoNotDeadlock(t *testing.T) {
 			roots[u.BotID] = true
 		}
 	}
-	if r.h.Busy(a.ID) || r.h.Busy(b.ID) {
-		t.Fatal("cycle left work running")
-	}
+	waitJobs(t, r.h)
 }
 
 func TestUserAndHandoffShareFIFO(t *testing.T) {

@@ -250,7 +250,7 @@ func TestClaudeMCP(t *testing.T) {
 	if len(cfg.MCPServers) != 1 || s.Type != "stdio" || s.Command != testMCP.Command || !slices.Equal(s.Args, testMCP.Args) {
 		t.Errorf("config %+v", cfg)
 	}
-	if !slices.Contains(args, "--strict-mcp-config") || after(args, "--allowedTools") != "mcp__bqbot__ask_bot,mcp__bqbot__list_bots" ||
+	if !slices.Contains(args, "--strict-mcp-config") || after(args, "--allowedTools") != "mcp__bqbot__ask_bot,mcp__bqbot__list_bots,mcp__bqbot__list_threads,mcp__bqbot__close_thread,mcp__bqbot__list_room_targets" ||
 		after(args, "--permission-mode") != "dontAsk" {
 		t.Errorf("args %q", args)
 	}
@@ -266,7 +266,7 @@ func TestCodexMCP(t *testing.T) {
 	for _, want := range []string{
 		`mcp_servers.bqbot.command="/Apps/bq bot"`,
 		`mcp_servers.bqbot.args=["mcp","/tmp/grant.json"]`,
-		`mcp_servers.bqbot.enabled_tools=["ask_bot","list_bots"]`,
+		`mcp_servers.bqbot.enabled_tools=["ask_bot","list_bots","list_threads","close_thread","list_room_targets"]`,
 		`mcp_servers.bqbot.default_tools_approval_mode="approve"`,
 		`mcp_servers.bqbot.tool_timeout_sec=900`,
 		`sandbox_mode="read-only"`,
@@ -287,7 +287,7 @@ func TestPiMCP(t *testing.T) {
 	}
 	args := (&Pi{}).Args(TurnInput{MCP: testMCP})
 	if slices.Contains(args, "--no-mcp") || !slices.Contains(args, "--approve") ||
-		after(args, "--tools") != "read,grep,find,ls,edit,write,bash,mcp__bqbot__ask_bot,mcp__bqbot__list_bots" {
+		after(args, "--tools") != "read,grep,find,ls,edit,write,bash,mcp__bqbot__ask_bot,mcp__bqbot__list_bots,mcp__bqbot__list_threads,mcp__bqbot__close_thread,mcp__bqbot__list_room_targets" {
 		t.Errorf("args %q", args)
 	}
 	cfgPath := filepath.Join(dir, ".pi", "mcp.json")

@@ -34,12 +34,15 @@ const Server = "bqbot"
 
 // Tool names.
 const (
-	ToolList = "list_bots"
-	ToolAsk  = "ask_bot"
+	ToolList        = "list_bots"
+	ToolAsk         = "ask_bot"
+	ToolThreads     = "list_threads"
+	ToolCloseThread = "close_thread"
+	ToolRoomTargets = "list_room_targets"
 )
 
 // Tools are the server's tool names.
-var Tools = []string{ToolAsk, ToolList}
+var Tools = []string{ToolAsk, ToolList, ToolThreads, ToolCloseThread, ToolRoomTargets}
 
 // Backend answers the tools.
 type Backend interface {
@@ -93,15 +96,14 @@ var toolList = map[string]any{"tools": []any{
 		"annotations": map[string]any{"readOnlyHint": true},
 	},
 	map[string]any{
-		"name": ToolAsk,
-		"description": "Hand a question to another of the person's bots and wait for its answer, which comes back to you " +
-			"(not to the person). The bot answers in its own conversation; it cannot ask other bots in turn. " +
-			"Fails if that bot is busy.",
+		"name":        ToolAsk,
+		"description": "Dispatch a question asynchronously. Returns an acceptance receipt immediately. Finish this turn; you are automatically resumed with the result. Busy targets are queued. In a channel, targets must be channel members.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"name":     map[string]any{"type": "string", "description": "The bot's name, as list_bots shows it"},
 				"question": map[string]any{"type": "string", "description": "The question, with the context the bot needs: it does not see your conversation"},
+				"thread":   map[string]any{"type": "string", "enum": []string{"new"}, "description": "Optional: start a new private handoff thread instead of continuing the latest one. Omit in channels."},
 			},
 			"required": []string{"name", "question"},
 		},
@@ -208,10 +210,25 @@ func call(ctx context.Context, b Backend, params json.RawMessage) map[string]any
 		Arguments struct {
 			Name     string `json:"name"`
 			Question string `json:"question"`
+			ThreadID string `json:"thread_id"`
+			Thread   string `json:"thread"`
 		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return toolResult("", fmt.Errorf("bad arguments: %v", err))
+	}
+	if extended, ok := b.(ThreadBackend); ok {
+		switch p.Name {
+		case ToolThreads:
+			return toolResult(extended.ListThreads(ctx))
+		case ToolRoomTargets:
+			return toolResult(extended.ListRoomTargets(ctx))
+		case ToolCloseThread:
+			if strings.TrimSpace(p.Arguments.ThreadID) == "" {
+				return toolResult("", errors.New("thread_id is required"))
+			}
+			return toolResult(extended.CloseThread(ctx, p.Arguments.ThreadID))
+		}
 	}
 	switch p.Name {
 	case ToolList:
@@ -219,6 +236,17 @@ func call(ctx context.Context, b Backend, params json.RawMessage) map[string]any
 	case ToolAsk:
 		if strings.TrimSpace(p.Arguments.Name) == "" || strings.TrimSpace(p.Arguments.Question) == "" {
 			return toolResult("", errors.New("name and question are required"))
+		}
+		if p.Arguments.Thread != "" {
+			if p.Arguments.Thread != "new" {
+				return toolResult("", errors.New("thread must be new"))
+			}
+			if extended, ok := b.(interface {
+				AskBotInThread(context.Context, string, string, string) (string, error)
+			}); ok {
+				return toolResult(extended.AskBotInThread(ctx, p.Arguments.Name, p.Arguments.Question, p.Arguments.Thread))
+			}
+			return toolResult("", errors.New("new handoff threads are unavailable"))
 		}
 		return toolResult(b.AskBot(ctx, p.Arguments.Name, p.Arguments.Question))
 	}
@@ -237,8 +265,8 @@ type HTTPBackend struct {
 	URL          string // http://127.0.0.1:port
 	Token        string
 	ApprovalOnly bool
-	// Client is a client without a proxy or timeout when nil: an ask waits
-	// for a whole turn of the other bot.
+	// Client overrides the local HTTP transport. A nil client disables proxies.
+	// ask_bot returns its dispatch receipt without waiting for the target.
 	Client *http.Client
 }
 
@@ -250,6 +278,7 @@ type Reply struct {
 
 // AskRequest is the body of POST /ask_bot.
 type AskRequest struct {
+	Thread   string `json:"thread,omitempty"`
 	Name     string `json:"name"`
 	Question string `json:"question"`
 }
@@ -260,6 +289,11 @@ func (c *HTTPBackend) ListBots(ctx context.Context) (string, error) {
 
 func (c *HTTPBackend) AskBot(ctx context.Context, name, question string) (string, error) {
 	return c.post(ctx, "/ask_bot", AskRequest{Name: name, Question: question})
+}
+
+// AskBotInThread requests a fresh private thread when thread is "new".
+func (c *HTTPBackend) AskBotInThread(ctx context.Context, name, question, thread string) (string, error) {
+	return c.post(ctx, "/ask_bot", AskRequest{Name: name, Question: question, Thread: thread})
 }
 
 func (c *HTTPBackend) post(ctx context.Context, path string, body any) (string, error) {
@@ -295,8 +329,8 @@ func (c *HTTPBackend) post(ctx context.Context, path string, body any) (string, 
 	return r.Text, nil
 }
 
-// ToolTimeout is how long an engine should wait for one tool call: ask_bot
-// lasts a whole turn of the other bot.
+// ToolTimeout retains the legacy engine RPC ceiling for compatibility.
+// Dispatch and discovery return promptly; this is not a target-turn wait.
 const ToolTimeout = 15 * time.Minute
 
 // ToolPrefix is how the engines name the server's tools: mcp__bqbot__ask_bot.

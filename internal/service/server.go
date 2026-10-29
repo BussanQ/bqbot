@@ -99,6 +99,7 @@ func (s *Server) Close() error {
 
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
+	s.phase3Routes(mux)
 	mux.HandleFunc("GET /v1/bots", func(w http.ResponseWriter, r *http.Request) { v, e := s.h.Store.Bots(); result(w, v, e) })
 	mux.HandleFunc("PUT /v1/bots", s.saveBot)
 	mux.HandleFunc("DELETE /v1/bots/{bot}", s.withBot(func(w http.ResponseWriter, r *http.Request, b store.Bot) { result(w, struct{}{}, s.h.DeleteBot(b.ID)) }))
@@ -254,7 +255,7 @@ func (s *Server) saveBot(w http.ResponseWriter, r *http.Request) {
 		err = s.validateBot(b, settings)
 	}
 	if err == nil {
-		err = s.h.Store.SaveProfile(b)
+		err = s.h.SaveProfile(b)
 	}
 	result(w, struct{}{}, err)
 }

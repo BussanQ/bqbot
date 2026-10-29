@@ -52,6 +52,9 @@ func backendName(b Backend) string {
 }
 func backendTools(b Backend) map[string]any {
 	if !approvalRestricted(b) {
+		if _, ok := b.(ThreadBackend); !ok {
+			return map[string]any{"tools": toolList["tools"].([]any)[:2]}
+		}
 		return toolList
 	}
 	return map[string]any{"tools": []any{map[string]any{

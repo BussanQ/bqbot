@@ -379,7 +379,7 @@ func TestCodexRPCArgs(t *testing.T) {
 	if args[0] != "app-server" {
 		t.Fatal(args)
 	}
-	for _, want := range []string{`mcp_servers={}`, `sandbox_mode="read-only"`, `approval_policy="untrusted"`, `mcp_servers.bqbot.enabled_tools=["ask_bot","list_bots"]`} {
+	for _, want := range []string{`mcp_servers={}`, `sandbox_mode="read-only"`, `approval_policy="untrusted"`, `mcp_servers.bqbot.enabled_tools=["ask_bot","list_bots","list_threads","close_thread","list_room_targets"]`} {
 		if !slices.Contains(args, want) {
 			t.Error(fmt.Sprintf("args lack %s: %v", want, args))
 		}

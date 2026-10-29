@@ -14,9 +14,13 @@ import (
 	"bqbot/internal/store"
 )
 
-// Update is the service-facing runtime event. Handoff replies are persisted in
-// their own thread but are hidden from the target's main conversation.
+// Update is the service-facing runtime event, routed by ThreadID or RoomID.
 type Update struct {
+	ThreadID         string                   `json:"thread_id,omitempty"`
+	RoomID           string                   `json:"room_id,omitempty"`
+	Thread           *store.Thread            `json:"thread,omitempty"`
+	Room             *store.Room              `json:"room,omitempty"`
+	Metadata         bool                     `json:"metadata,omitempty"`
 	Sequence         uint64                   `json:"sequence,omitempty"`
 	Sync             bool                     `json:"sync,omitempty"`
 	Bot              *store.Bot               `json:"bot,omitempty"`
@@ -42,22 +46,25 @@ type Update struct {
 // Harness runs turns. Configure Drivers and OnUpdate before submitting work;
 // use Subscribe for concurrently attaching and detaching consumers.
 type Harness struct {
-	Store       *store.Store
-	Drivers     map[string]driver.Driver
-	OnUpdate    func(Update)
-	mu          sync.Mutex
-	running     map[string]*turn
-	queues      map[string][]*turn
-	deleting    map[string]bool
-	subscribers map[*subscription]bool
-	legacy      *subscription
-	hand        *handoff
-	closed      bool
-	sequence    uint64
+	Store         *store.Store
+	Drivers       map[string]driver.Driver
+	OnUpdate      func(Update)
+	mu            sync.Mutex
+	running       map[string]*turn
+	queues        map[string][]*turn
+	deleting      map[string]bool
+	subscribers   map[*subscription]bool
+	legacy        *subscription
+	hand          *handoff
+	closed        bool
+	sequence      uint64
+	closingScopes map[string]bool
+	jobs          map[*asyncJob]bool
+	routing       map[*roomRoute]bool
 }
 
 func New(st *store.Store, drivers ...driver.Driver) *Harness {
-	h := &Harness{Store: st, Drivers: map[string]driver.Driver{}, running: map[string]*turn{}, queues: map[string][]*turn{}, deleting: map[string]bool{}, subscribers: map[*subscription]bool{}}
+	h := &Harness{Store: st, Drivers: map[string]driver.Driver{}, running: map[string]*turn{}, queues: map[string][]*turn{}, deleting: map[string]bool{}, subscribers: map[*subscription]bool{}, closingScopes: map[string]bool{}, jobs: map[*asyncJob]bool{}, routing: map[*roomRoute]bool{}}
 	for _, d := range drivers {
 		h.Drivers[d.Name()] = d
 	}
@@ -68,6 +75,12 @@ func New(st *store.Store, drivers ...driver.Driver) *Harness {
 var ErrBusy = errors.New("the bot is still answering")
 
 type turn struct {
+	thread           store.Thread
+	roomID           string
+	roomUserRecorded bool
+	job              *asyncJob
+	wake             bool
+	dispatched       int
 	bot              store.Bot
 	depth            int
 	asker, askerName string
@@ -117,48 +130,7 @@ func (h *Harness) Send(bot store.Bot, text string) (store.Message, error) {
 // Engines may implement SupportsSteering() bool to receive text through Steer;
 // unsupported steering, image steering and a full steer buffer fall back to FIFO.
 func (h *Harness) Submit(bot store.Bot, text string, attachments []driver.Attachment, mode string) (store.Message, error) {
-	if mode != "" && mode != "queue" && mode != "steer" {
-		return store.Message{}, fmt.Errorf("unknown submit mode %q", mode)
-	}
-	if err := validateAttachments(attachments); err != nil {
-		return store.Message{}, err
-	}
-	text = strings.TrimSpace(text)
-	if text == "" && len(attachments) == 0 {
-		return store.Message{}, errors.New("empty message")
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	latest, err := h.Bot(bot.ID)
-	if err != nil {
-		return store.Message{}, err
-	}
-	bot = latest
-	if h.closed || h.deleting[bot.ID] {
-		return store.Message{}, errors.New("bot is closing")
-	}
-	d := h.Drivers[bot.Engine]
-	if d == nil {
-		return store.Message{}, fmt.Errorf("engine %q is not available", bot.Engine)
-	}
-	user := store.Message{ID: store.NewID(), Role: "user", Text: text, Attachments: append([]driver.Attachment(nil), attachments...), At: time.Now()}
-	if current := h.running[bot.ID]; mode == "steer" && current != nil && current.asker == "" && current.ctx.Err() == nil && current.prepared && current.bot.Engine == bot.Engine && len(attachments) == 0 && len(h.queues[bot.ID]) == 0 {
-		if capable, ok := d.(interface{ SupportsSteering() bool }); ok && capable.SupportsSteering() && len(current.steer) < cap(current.steer) {
-			if err := h.record(current, user); err != nil {
-				return store.Message{}, err
-			}
-			if err := h.publishLocked(current, Update{BotID: bot.ID, User: clone(user), Busy: true}); err != nil {
-				return store.Message{}, err
-			}
-			current.steer <- text
-			return user, nil
-		}
-	}
-	t := newTurn(context.Background(), bot, user, nil)
-	if err := h.enqueueLocked(t); err != nil {
-		return store.Message{}, err
-	}
-	return user, nil
+	return h.SendThread(bot.ID, text, attachments, mode)
 }
 
 func newTurn(parent context.Context, bot store.Bot, user store.Message, from *turn) *turn {
@@ -177,6 +149,27 @@ func newTurn(parent context.Context, bot store.Bot, user store.Message, from *tu
 // enqueueLocked serializes queue admission and its durable event.
 func (h *Harness) enqueueLocked(t *turn) error {
 	id := t.bot.ID
+	if t.thread.ID == "" {
+		var err error
+		if t.asker != "" {
+			t.thread, err = h.Store.HandoffThread(id, t.asker)
+		} else {
+			t.thread, err = h.Store.Thread(id)
+		}
+		if err != nil {
+			t.cancel()
+			return err
+		}
+	}
+	t.user.ThreadID, t.reply.ThreadID = t.thread.ID, t.thread.ID
+	t.reply.BotID = id
+	if t.roomID != "" {
+		t.reply.From = t.bot.Name
+	}
+	if t.thread.Closed || h.closingScopes[t.thread.ID] || h.closingScopes[t.roomID] {
+		t.cancel()
+		return errors.New("conversation is closing")
+	}
 	if h.closed || h.deleting[id] || h.deleting[t.asker] {
 		t.cancel()
 		return errors.New("bot is closing")
@@ -223,6 +216,8 @@ func (h *Harness) Stop(id string) {
 	h.stopLocked(id)
 }
 func (h *Harness) stopLocked(id string) {
+	h.cancelRoutesLocked(func(r *roomRoute) bool { return member(r.room, id) })
+	h.cancelJobsLocked(func(j *asyncJob) bool { return j.botID == id || j.target.bot.ID == id })
 	for _, t := range append([]*turn(nil), h.queues[id]...) {
 		h.cancelQueuedLocked(t)
 	}
@@ -256,7 +251,8 @@ func (h *Harness) DeleteBot(id string) error {
 		return errors.New("bot is already being deleted")
 	}
 	h.deleting[id] = true
-	var waits []<-chan struct{}
+	waits := h.cancelJobsLocked(func(j *asyncJob) bool { return j.botID == id || j.target.bot.ID == id })
+	waits = append(waits, h.cancelRoutesLocked(func(r *roomRoute) bool { return member(r.room, id) })...)
 	for _, t := range h.running {
 		if t.bot.ID == id || t.asker == id {
 			t.cancel()
@@ -278,6 +274,7 @@ func (h *Harness) DeleteBot(id string) error {
 	err := h.Store.DeleteBot(id)
 	h.mu.Lock()
 	delete(h.deleting, id)
+	h.metadataLocked(Update{BotID: id})
 	h.mu.Unlock()
 	return err
 }
@@ -292,23 +289,28 @@ func (t *turn) contextErr() error {
 	return nil
 }
 
-func (t *turn) cursor() string {
-	if t.asker != "" {
-		return t.bot.Handoffs[t.asker]
-	}
-	return t.bot.Cursor
-}
+func (t *turn) cursor() string { return t.thread.Cursor }
 func (h *Harness) record(t *turn, m store.Message) error {
-	if t.asker != "" {
-		return h.Store.AppendHandoff(t.bot.ID, t.asker, m)
+	m.ThreadID = t.thread.ID
+	if m.Role != "user" {
+		m.BotID = t.bot.ID
 	}
-	return h.Store.Append(t.bot.ID, m)
+	if t.roomID != "" {
+		if m.Role == "user" && t.roomUserRecorded {
+			return nil
+		}
+		if m.Role != "user" {
+			m.From = t.reply.From
+		}
+		return h.Store.AppendRoom(t.roomID, m)
+	}
+	return h.Store.AppendThread(t.thread.ID, m)
 }
 func (h *Harness) transcript(t *turn) ([]store.Message, error) {
-	if t.asker != "" {
-		return h.Store.HandoffTranscript(t.bot.ID, t.asker)
+	if t.roomID != "" {
+		return h.Store.RoomTranscript(t.roomID)
 	}
-	return h.Store.Transcript(t.bot.ID)
+	return h.Store.ThreadTranscript(t.thread.ID)
 }
 
 func (h *Harness) note(t *turn, line string) {
@@ -371,7 +373,7 @@ func (h *Harness) run(t *turn) {
 		err = errors.Join(err, h.record(t, t.reply))
 	}
 	if t.cursorValue != t.cursor() {
-		err = errors.Join(err, h.Store.SaveCursor(t.bot, t.asker, t.cursorValue))
+		err = errors.Join(err, h.Store.SaveThreadCursor(t.thread, t.cursorValue))
 	}
 	t.result = *clone(t.reply)
 	t.err = err
@@ -383,6 +385,7 @@ func (h *Harness) run(t *turn) {
 		t.err = errors.Join(t.err, e)
 	}
 	close(t.done)
+	h.completeJobLocked(t)
 	h.nextLocked(t.bot.ID)
 }
 
@@ -395,7 +398,7 @@ func (h *Harness) prepare(t *turn) (driver.TurnInput, func(), error) {
 	if err != nil {
 		return in, nil, err
 	}
-	if t.asker != "" {
+	if t.asker != "" || t.wake {
 		b.ApprovalMode = t.bot.ApprovalMode
 	}
 	switch b.ApprovalMode {
@@ -404,9 +407,26 @@ func (h *Harness) prepare(t *turn) (driver.TurnInput, func(), error) {
 		b.ApprovalMode = "ask"
 	}
 	t.bot = b
+	thread, err := h.Store.Thread(t.thread.ID)
+	if err != nil {
+		return in, nil, err
+	}
+	if thread.Closed {
+		return in, nil, errors.New("thread is closed")
+	}
+	t.thread = thread
 	t.cursorValue = t.cursor()
 	if err := t.contextErr(); err != nil {
 		return in, nil, err
+	}
+	if t.roomID != "" {
+		room, e := h.Store.Room(t.roomID)
+		if e != nil {
+			return in, nil, e
+		}
+		if !member(room, b.ID) {
+			return in, nil, errors.New("bot is no longer a channel member")
+		}
 	}
 	history, err := h.transcript(t)
 	if err != nil {
@@ -423,14 +443,39 @@ func (h *Harness) prepare(t *turn) (driver.TurnInput, func(), error) {
 	if err != nil {
 		return in, nil, err
 	}
+	if t.roomID != "" {
+		dir, err = h.Store.RoomWorkDir(t.roomID)
+		if err != nil {
+			return in, nil, err
+		}
+	}
 	settings, err := h.Store.Settings()
 	if err != nil {
 		return in, nil, err
 	}
 	in = driver.TurnInput{Text: t.user.Text, Model: b.Model, Effort: b.Effort, Cursor: t.cursor(), Dir: dir, Settings: settings[b.Engine], ApprovalMode: b.ApprovalMode, Attachments: append([]driver.Attachment(nil), t.user.Attachments...), Steer: t.steer}
+	if t.roomID != "" {
+		in.Cursor = ""
+	}
+	if t.thread.Summary != "" && t.roomID == "" {
+		in.History = append(in.History, driver.HistoryMessage{Role: "user", Text: "Earlier conversation summary:\n" + t.thread.Summary})
+		for i, m := range history {
+			if m.ID == t.thread.SummaryThrough {
+				history = history[i+1:]
+				break
+			}
+		}
+	}
 	for _, m := range history {
+		if m.ID == t.user.ID {
+			continue
+		}
+		text := m.Text
+		if t.roomID != "" && m.From != "" {
+			text = m.From + ": " + text
+		}
 		if m.Role == "user" || m.Role == "assistant" {
-			in.History = append(in.History, driver.HistoryMessage{Role: m.Role, Text: m.Text, Attachments: append([]driver.Attachment(nil), m.Attachments...)})
+			in.History = append(in.History, driver.HistoryMessage{Role: m.Role, Text: text, Attachments: append([]driver.Attachment(nil), m.Attachments...)})
 		}
 	}
 	if t.asker != "" {
@@ -462,6 +507,32 @@ func (h *Harness) prepare(t *turn) (driver.TurnInput, func(), error) {
 		}
 	}
 	in.System = h.persona(b, in.MCP != nil)
+	scope := t.thread.ID
+	if t.roomID != "" {
+		room, e := h.Store.Room(t.roomID)
+		if e != nil {
+			return in, revoke, e
+		}
+		in.System = h.persona(b, false) + "\n\nShared channel instructions:\n" + room.Instructions
+		in.System += "\nChannel members:"
+		for _, id := range room.Members {
+			other, e := h.Bot(id)
+			if e == nil {
+				in.System += "\n- " + other.Name + ": " + clip(other.Persona, 200)
+			}
+		}
+		if in.MCP != nil {
+			in.System += "\nUse ask_bot to delegate to a channel member. It returns a receipt immediately; finish the turn without polling. You will be resumed when the result arrives."
+		}
+		scope = t.roomID
+	}
+	memories, e := h.Store.Recall(scope, t.user.Text)
+	if e != nil {
+		return in, revoke, e
+	}
+	for _, memory := range memories {
+		in.System += "\nRecalled memory: " + memory.Text
+	}
 	if h.Drivers[b.Engine] == nil {
 		return in, revoke, fmt.Errorf("engine %q is not available", b.Engine)
 	}
@@ -527,8 +598,7 @@ func (h *Harness) persona(b store.Bot, handoff bool) string {
 		return s
 	}
 	return s + "\n\nThe person's other bots are below. When one of them is better placed to answer part of a request, " +
-		"ask it with the " + mcp.ToolPrefix + mcp.ToolAsk + " tool, giving it the context it needs, then answer the person " +
-		"yourself with what it said. " + mcp.ToolPrefix + mcp.ToolList + " shows the current list." + roster.String()
+		"ask it with the " + mcp.ToolPrefix + mcp.ToolAsk + " tool, giving it the context it needs. The tool returns a receipt immediately; finish this turn without polling. You will be automatically resumed when the answer arrives. " + mcp.ToolPrefix + mcp.ToolList + " shows the current list." + roster.String()
 }
 
 func clip(s string, n int) string {

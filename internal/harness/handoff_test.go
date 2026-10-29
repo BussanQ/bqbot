@@ -26,6 +26,10 @@ func (d *asker) Binary() string { return "" }
 
 func (d *asker) Run(ctx context.Context, in driver.TurnInput, emit func(driver.Event)) error {
 	if in.MCP == nil {
+		if strings.HasPrefix(in.Text, "Handoff completed") || strings.HasPrefix(in.Text, "Handoff to ") {
+			emit(driver.Event{Kind: driver.EvText, Text: "resumed: " + in.Text})
+			return nil
+		}
 		emit(driver.Event{Kind: driver.EvText, Text: "no bqbot tools"})
 		return nil
 	}
@@ -112,50 +116,53 @@ func TestAskBot(t *testing.T) {
 	r := newRig(t, &asker{}, &driver.Echo{})
 	ada := r.bot("Ada", "asker", "")
 	bo := r.bot("Bo", "echo", "Reviews code.")
-	if _, err := r.h.Send(bo, "hello"); err != nil { // Bo's conversation with the person
+	if _, err := r.h.Send(bo, "hello"); err != nil {
 		t.Fatal(err)
 	}
 	r.wait(bo.ID)
 	if _, err := r.h.Send(ada, "ask bo what is 2+2"); err != nil {
 		t.Fatal(err)
 	}
-	// Bo's handoff turn shows to the UI only as busy, answering Ada.
-	if u := r.wait(bo.ID); u.Reply != nil || u.Answering != "Ada" {
-		t.Errorf("Bo's update %+v", u)
+	receipt := r.wait(ada.ID)
+	if !strings.Contains(receipt.Reply.Text, `"status":"accepted"`) || strings.Join(receipt.Reply.Tools, "|") != "已转交给 Bo" {
+		t.Fatalf("receipt: %+v", receipt.Reply)
 	}
-	u := r.wait(ada.ID)
-	if !strings.HasPrefix(u.Reply.Text, "got: Echo: Ada, another") || !strings.HasSuffix(u.Reply.Text, "what is 2+2") {
-		t.Errorf("Ada's reply %q", u.Reply.Text)
+	waitJobs(t, r.h)
+	main, _ := r.st.Transcript(ada.ID)
+	if len(main) != 4 || !strings.Contains(main[3].Text, "Echo: Ada, another") || !strings.Contains(main[3].Text, "what is 2+2") {
+		t.Fatalf("asker transcript: %+v", main)
 	}
-	// The handoff line replaces the raw tool line.
-	if strings.Join(u.Reply.Tools, "|") != "已转交给 Bo" {
-		t.Errorf("Ada's tools %q", u.Reply.Tools)
+	thread, err := r.st.HandoffThread(bo.ID, ada.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// The question and answer are kept apart from Bo's conversation with
-	// the person, and in a session of their own.
-	msgs, _ := r.st.Transcript(bo.ID)
-	if len(msgs) != 2 || msgs[0].Text != "hello" {
-		t.Errorf("Bo's transcript %+v", msgs)
+	hand, _ := r.st.ThreadTranscript(thread.ID)
+	if len(hand) != 2 || hand[0].From != "Ada" || hand[0].Text != "what is 2+2" {
+		t.Fatalf("handoff: %+v", hand)
 	}
-	hand, _ := r.st.HandoffTranscript(bo.ID, ada.ID)
-	if len(hand) != 2 || hand[0].From != "Ada" || hand[0].Text != "what is 2+2" || !strings.HasSuffix(hand[1].Text, "what is 2+2") {
-		t.Errorf("Bo's handoff transcript %+v", hand)
+	messages, _ := r.st.Transcript(bo.ID)
+	if len(messages) != 2 || messages[0].Text != "hello" {
+		t.Fatalf("main polluted: %+v", messages)
 	}
-	bots, _ := r.st.Bots()
-	var boNow store.Bot
-	for _, b := range bots {
-		if b.ID == bo.ID {
-			boNow = b
-		}
+	current, _ := r.st.Thread(thread.ID)
+	bot, _ := r.h.Bot(bo.ID)
+	if current.Cursor == "" || current.Cursor == bot.Cursor {
+		t.Fatalf("cursors: %+v %+v", current, bot)
 	}
-	if boNow.Cursor == "" || boNow.Handoffs[ada.ID] == "" || boNow.Handoffs[ada.ID] == boNow.Cursor {
-		t.Errorf("Bo's sessions: cursor %q, handoffs %v", boNow.Cursor, boNow.Handoffs)
-	}
+	seen := false
 	for len(r.ups) > 0 {
-		if u := <-r.ups; u.BotID == bo.ID && u.Answering != "" && u.Reply != nil {
-			t.Errorf("the UI got Bo's handoff reply: %+v", u)
+		u := <-r.ups
+		if u.ThreadID == thread.ID && u.Done && u.Reply != nil {
+			seen = true
 		}
 	}
+	if !seen {
+		t.Fatal("handoff was not visible in target thread")
+	}
+}
+func waitJobs(t *testing.T, h *Harness) {
+	t.Helper()
+	eventually(t, func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(h.jobs) == 0 && len(h.running) == 0 })
 }
 
 // A second question from the same bot resumes their session; another
@@ -166,20 +173,27 @@ func TestHandoffSessions(t *testing.T) {
 	ada := r.bot("Ada", "asker", "")
 	cy := r.bot("Cy", "asker", "")
 	bo := r.bot("Bo", "cecho", "")
-	r.h.Send(ada, "ask Bo one")
-	r.wait(ada.ID)
-	r.h.Send(ada, "ask Bo two")
-	r.wait(ada.ID)
-	r.h.Send(cy, "ask Bo three")
-	r.wait(cy.ID)
-	if a, b, c := <-cursors, <-cursors, <-cursors; a != "" || b != "s1" || c != "" {
-		t.Errorf("Bo resumed %q, %q, %q", a, b, c)
+	for _, v := range []struct {
+		bot  store.Bot
+		text string
+	}{{ada, "ask Bo one"}, {ada, "ask Bo two"}, {cy, "ask Bo three"}} {
+		r.h.Send(v.bot, v.text)
+		waitJobs(t, r.h)
 	}
-	bots, _ := r.st.Bots()
-	for _, b := range bots {
-		if b.ID == bo.ID && (b.Handoffs[ada.ID] != "s1" || b.Handoffs[cy.ID] != "s2" || b.Cursor != "") {
-			t.Errorf("Bo %+v", b)
-		}
+	if a, b, c := <-cursors, <-cursors, <-cursors; a != "" || b != "s1" || c != "" {
+		t.Fatalf("resumed %q,%q,%q", a, b, c)
+	}
+	first, _ := r.st.HandoffThread(bo.ID, ada.ID)
+	second, _ := r.st.HandoffThread(bo.ID, cy.ID)
+	if first.Cursor != "s1" || second.Cursor != "s2" {
+		t.Fatalf("sessions %+v %+v", first, second)
+	}
+	if err := r.h.CloseThread(first.ID); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := r.st.HandoffThread(bo.ID, ada.ID)
+	if next.ID == first.ID || next.Cursor != "" {
+		t.Fatalf("closed thread reused: %+v", next)
 	}
 }
 
@@ -206,10 +220,15 @@ func TestAskDepthLimit(t *testing.T) {
 	ada := r.bot("Ada", "asker", "")
 	bo := r.bot("Bo", "asker", "")
 	r.h.Send(ada, "ask Bo ask Ada again")
-	// Bo answers Ada without bqbot tools, so it cannot ask in turn.
-	r.wait(bo.ID)
-	if u := r.wait(ada.ID); u.Reply.Text != "got: no bqbot tools" {
-		t.Errorf("Ada's reply %q", u.Reply.Text)
+	waitJobs(t, r.h)
+	thread, _ := r.st.HandoffThread(bo.ID, ada.ID)
+	hand, _ := r.st.ThreadTranscript(thread.ID)
+	if len(hand) != 2 || hand[1].Text != "no bqbot tools" {
+		t.Fatalf("depth limit: %+v", hand)
+	}
+	main, _ := r.st.Transcript(ada.ID)
+	if len(main) != 4 || !strings.Contains(main[3].Text, "no bqbot tools") {
+		t.Fatalf("wake: %+v", main)
 	}
 }
 
@@ -222,13 +241,15 @@ func TestAskBusyAndUnknown(t *testing.T) {
 	}
 	r.h.Send(ada, "ask Bo anything")
 	u := r.wait(ada.ID)
-	if !strings.HasPrefix(u.Reply.Text, "got: Echo: Ada, another") {
+	if !strings.Contains(u.Reply.Text, `"status":"accepted"`) {
 		t.Fatalf("queued handoff: %q", u.Reply.Text)
 	}
 	if strings.Join(u.Reply.Tools, "|") != "已转交给 Bo" {
 		t.Fatalf("tools: %v", u.Reply.Tools)
 	}
 
+	r.wait(ada.ID) // automatic completion turn
+	waitJobs(t, r.h)
 	r.h.Send(ada, "ask Nobody anything")
 	if u := r.wait(ada.ID); !strings.Contains(u.Reply.Text, `no bot is named "Nobody"`) {
 		t.Errorf("unknown: %q", u.Reply.Text)
@@ -254,11 +275,19 @@ func TestStopCallerStopsTarget(t *testing.T) {
 	}
 	// Busy reserves a FIFO slot before prepare writes the user message. This
 	// test stops an executing handoff; queued cancellation is covered separately.
-	eventually(t, func() bool { msgs, err := r.st.HandoffTranscript(bo.ID, ada.ID); return err == nil && len(msgs) > 0 })
+	eventually(t, func() bool {
+		thread, err := r.st.HandoffThread(bo.ID, ada.ID)
+		if err != nil {
+			return false
+		}
+		msgs, err := r.st.ThreadTranscript(thread.ID)
+		return err == nil && len(msgs) > 0
+	})
 	r.h.Stop(ada.ID)
 	r.wait(bo.ID)
-	r.wait(ada.ID)
-	if hand, _ := r.st.HandoffTranscript(bo.ID, ada.ID); len(hand) != 2 || !strings.Contains(hand[1].Text, "*(stopped)*") {
+	waitJobs(t, r.h)
+	thread, _ := r.st.HandoffThread(bo.ID, ada.ID)
+	if hand, _ := r.st.ThreadTranscript(thread.ID); len(hand) != 2 || !strings.Contains(hand[1].Text, "*(stopped)*") {
 		t.Errorf("Bo's handoff transcript %+v", hand)
 	}
 }

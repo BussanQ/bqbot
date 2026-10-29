@@ -53,6 +53,14 @@ func (d *Pi) runRPC(ctx context.Context, in TurnInput, emit func(Event)) error {
 			return err
 		}
 	}
+	unlock, err := lockPiWorkspace(ctx, in.Dir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := writeMCPConfig(in.Dir, in.MCP); err != nil {
 		return err
 	}

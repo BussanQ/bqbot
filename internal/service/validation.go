@@ -43,6 +43,9 @@ func (s *Server) validateBot(b store.Bot, settings map[string]driver.EngineSetti
 	if strings.TrimSpace(b.Name) == "" || !safeText(b.Name, 256) {
 		return invalid("invalid bot name")
 	}
+	if !safeText(b.Avatar, 64) || strings.ContainsAny(b.Avatar, "/\\") {
+		return invalid("invalid avatar")
+	}
 	if len(b.Persona) > 1<<20 {
 		return invalid("persona is too large")
 	}

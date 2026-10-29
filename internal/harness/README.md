@@ -1,5 +1,9 @@
 # Phase 2 integration
 
+For the current thread, room, asynchronous handoff and event contract, see
+[Phase 3 runtime integration](PHASE3_RUNTIME.md). The following records Phase 2
+behavior; Phase 3 supersedes its hidden handoff projection and log routing.
+
 The service API is `Subscribe`, `Snapshot`, `Submit`, `Send`, `Approve`,
 `Stop`, `DeleteBot`, and `Bot`. Set `Drivers` and legacy `OnUpdate` before
 submitting work. Concurrent consumers should use `Subscribe` and always invoke

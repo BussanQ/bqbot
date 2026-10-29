@@ -97,10 +97,7 @@ func (h *Harness) Snapshot() []Update {
 	sort.Strings(ids)
 	for _, id := range ids {
 		t := h.running[id]
-		u := Update{BotID: id, Busy: true, Reply: clone(t.reply), Queued: len(h.queues[id]), Answering: t.askerName}
-		if t.asker != "" {
-			u.Reply = nil
-		}
+		u := Update{BotID: id, ThreadID: t.thread.ID, RoomID: t.roomID, Busy: true, Reply: clone(t.reply), Queued: len(h.queues[id]), Answering: t.askerName}
 		out = append(out, u)
 		keys := make([]string, 0, len(t.pending))
 		for key := range t.pending {
@@ -118,18 +115,43 @@ func (h *Harness) Snapshot() []Update {
 	return out
 }
 
-// publishLocked persists the full thread event first, then publishes a main
-// conversation projection. Persistence failures cancel the turn and are sent
+// publishLocked persists the full thread event before broadcasting its scoped
+// conversation update. Persistence failures cancel the turn and are sent
 // as explicit Error updates (the failing storage cannot persist that notice).
 func (h *Harness) publishLocked(t *turn, u Update) error {
 	h.sequence++
 	u.Sequence = h.sequence
-	u.Queued = len(h.queues[t.bot.ID])
+	u.ThreadID = t.thread.ID
+	u.RoomID = t.roomID
+	u.Queued = 0
+	match := func(other *turn) bool {
+		if t.roomID != "" {
+			return other.roomID == t.roomID
+		}
+		return other.thread.ID == t.thread.ID
+	}
+	for _, q := range h.queues {
+		for _, queued := range q {
+			if match(queued) {
+				u.Queued++
+			}
+		}
+	}
+	u.Busy = u.Queued > 0
+	for _, active := range h.running {
+		if match(active) {
+			u.Busy = true
+		}
+	}
 	u.Answering = t.askerName
 	if u.Err != nil {
 		u.Error = u.Err.Error()
 	}
-	err := h.Store.AppendEvent(t.bot.ID, t.asker, u)
+	eventID, asker := t.thread.ID, ""
+	if eventID == "" {
+		eventID, asker = t.bot.ID, t.asker
+	}
+	err := h.Store.AppendEvent(eventID, asker, u)
 	if err != nil {
 		t.err = errors.Join(t.err, err)
 		t.cancel()
@@ -141,15 +163,11 @@ func (h *Harness) publishLocked(t *turn, u Update) error {
 		u.QueuedUser = nil
 		u.Event = nil
 	}
-	if t.asker != "" {
-		u.Reply = nil
-		u.User = nil
-		u.QueuedUser = nil
-		u.Event = nil
-	}
-	if active := h.running[t.bot.ID]; active != nil && active != t {
-		u.Answering = active.askerName
-	}
+	h.broadcastLocked(u)
+	return err
+}
+
+func (h *Harness) broadcastLocked(u Update) {
 	for s := range h.subscribers {
 		s.push(u)
 	}
@@ -166,9 +184,28 @@ func (h *Harness) publishLocked(t *turn, u Update) error {
 		}
 		h.legacy.push(u)
 	}
-	return err
 }
 func copyUpdate(u Update) Update {
+	if u.Thread != nil {
+		v := *u.Thread
+		u.Thread = &v
+	}
+	if u.Room != nil {
+		v := *u.Room
+		v.Members = append([]string(nil), v.Members...)
+		u.Room = &v
+	}
+	if u.Bot != nil {
+		v := *u.Bot
+		if v.Handoffs != nil {
+			v.Handoffs = map[string]string{}
+			for k, c := range u.Bot.Handoffs {
+				v.Handoffs[k] = c
+			}
+		}
+		u.Bot = &v
+	}
+
 	if u.QueuedUser != nil {
 		u.QueuedUser = clone(*u.QueuedUser)
 	}

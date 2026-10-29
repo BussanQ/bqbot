@@ -82,6 +82,8 @@ func (s *Store) SaveProfile(bot Bot) error {
 		bot.Cursor, bot.Handoffs = "", nil
 		if sameSession(old, bot) {
 			bot.Cursor, bot.Handoffs = old.Cursor, old.Handoffs
+		} else if err := s.invalidateThreadCursorsLocked(bot); err != nil {
+			return err
 		}
 		bots[i] = bot
 		return s.writeBots(bots)

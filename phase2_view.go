@@ -20,6 +20,7 @@ import (
 )
 
 type approvalCard struct {
+	botID   string
 	request driver.ApprovalRequest
 	answer  string
 }
@@ -46,6 +47,10 @@ func (a *app) approvalCards(c *ui.Context, b store.Bot, t *thread) {
 		for _, id := range ids {
 			card := t.approvals[id]
 			r := card.request
+			owner := card.botID
+			if owner == "" {
+				owner = b.ID
+			}
 			ui.Column(c.Key(id)).Gap(8).Padding(12).Radius(12).Background(a.pal.bubble).Border(1, a.pal.accent.Alpha(0.4)).Children(func() {
 				title := "Permission requested · " + r.Tool
 				if r.Kind == "question" {
@@ -69,14 +74,14 @@ func (a *app) approvalCards(c *ui.Context, b store.Bot, t *thread) {
 				}
 				ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
 					if ui.Button(c, "Deny").Clicked() {
-						a.resolve(b.ID, id, driver.ApprovalDecision{Outcome: "deny"})
+						a.resolve(owner, id, driver.ApprovalDecision{Outcome: "deny"})
 					}
 					if r.Kind == "question" {
 						if ui.PrimaryButton(c, "Answer").Disabled(strings.TrimSpace(card.answer) == "").Clicked() {
-							a.resolve(b.ID, id, driver.ApprovalDecision{Outcome: "answer", Answer: card.answer})
+							a.resolve(owner, id, driver.ApprovalDecision{Outcome: "answer", Answer: card.answer})
 						}
 					} else if ui.PrimaryButton(c, "Allow").Clicked() {
-						a.resolve(b.ID, id, driver.ApprovalDecision{Outcome: "allow"})
+						a.resolve(owner, id, driver.ApprovalDecision{Outcome: "allow"})
 					}
 				})
 			})
@@ -89,7 +94,11 @@ func (a *app) resolve(botID, id string, d driver.ApprovalDecision) {
 		a.status = err.Error()
 		return
 	}
-	delete(a.thread(botID).approvals, id)
+	for _, t := range a.threads {
+		if card := t.approvals[id]; card != nil && (card.botID == "" || card.botID == botID) {
+			delete(t.approvals, id)
+		}
+	}
 }
 
 func (a *app) openOptions(b store.Bot) {
@@ -283,7 +292,7 @@ func (a *app) settingsView(c *ui.Context) {
 	})
 }
 
-func (a *app) pickImages(botID string) {
+func (a *app) pickImages(scopeID string) {
 	go func() {
 		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "Attach images", Multiple: true, Filters: []mygo.FileFilter{{Name: "Images", Extensions: []string{"png", "jpg", "jpeg", "gif", "webp"}}}})
 		var images []driver.Attachment
@@ -302,10 +311,10 @@ func (a *app) pickImages(botID string) {
 				a.status = err.Error()
 				return
 			}
-			if _, ok := a.bot(botID); !ok {
+			t := a.threads[scopeID]
+			if t == nil {
 				return
 			}
-			t := a.thread(botID)
 			if len(t.attachments)+len(images) > 4 {
 				a.status = "Attach up to 4 images per message."
 				return

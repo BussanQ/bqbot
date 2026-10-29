@@ -19,11 +19,15 @@ import (
 
 // thread is what the window shows of one bot's conversation.
 type thread struct {
-	loaded          bool
-	msgs            []store.Message
-	pendingMessages []store.Message
-	live            *store.Message // the reply streaming in
-	busy            bool
+	id, botID, roomID string
+	lives             map[string]*store.Message
+	active            map[string]bool
+	sequences         map[string]uint64
+	loaded            bool
+	msgs              []store.Message
+	pendingMessages   []store.Message
+	live              *store.Message // the reply streaming in
+	busy              bool
 	// answering is the bot whose question the busy bot answers, in its own
 	// session with that bot.
 	queued      int
@@ -48,6 +52,7 @@ type session struct {
 // app is the window's state. The view and every method run on the main
 // thread; other goroutines change it through post.
 type app struct {
+	phase3State
 	api     *service.Client
 	cancel  context.CancelFunc
 	catalog []service.Engine
@@ -104,9 +109,8 @@ func newApp(api *service.Client, post func(func())) (*app, error) {
 		return nil, err
 	}
 	a := &app{api: api, post: post, bots: bots, threads: map[string]*thread{}, split: 260, toolsOpen: map[string]*bool{}, engines: []string{"echo"}, images: map[string]*ui.Bitmap{}}
-	if len(bots) > 0 {
-		a.selected = bots[0].ID
-	}
+	a.refreshNavigation()
+	a.selectFirstVisible()
 	return a, nil
 }
 
@@ -157,14 +161,21 @@ func (a *app) probeEngines() {
 func (a *app) thread(id string) *thread {
 	t := a.threads[id]
 	if t == nil {
-		t = &thread{}
+		t = &thread{id: id, botID: id}
 		t.list.FollowEnd = true
 		t.list.FollowAnimation = &ui.Smooth
 		a.threads[id] = t
 	}
 	if !t.loaded {
 		t.loaded = true
-		msgs, err := a.api.Transcript(id)
+		var msgs []store.Message
+		var err error
+		if meta, ok := a.threadMeta(id); ok && meta.ID != meta.BotID {
+			t.botID = meta.BotID
+			msgs, err = a.api.ThreadTranscript(id)
+		} else {
+			msgs, err = a.api.Transcript(id)
+		}
 		if err != nil {
 			a.status = err.Error()
 		}
@@ -185,6 +196,13 @@ func (a *app) bot(id string) (store.Bot, bool) {
 
 // fold applies a harness update.
 func (a *app) fold(u harness.Update) {
+	if a.foldMetadata(u) {
+		return
+	}
+	if u.RoomID != "" {
+		a.foldRoom(u)
+		return
+	}
 	if u.Bot != nil {
 		if i := slices.IndexFunc(a.bots, func(b store.Bot) bool { return b.ID == u.BotID }); i >= 0 {
 			a.bots[i] = *u.Bot
@@ -200,7 +218,17 @@ func (a *app) fold(u harness.Update) {
 			return
 		}
 	}
-	t := a.thread(u.BotID)
+	id := u.ThreadID
+	if id == "" {
+		id = u.BotID
+	}
+	if id != u.BotID {
+		if _, ok := a.threadMeta(id); !ok {
+			a.refreshThreads(u.BotID)
+		}
+	}
+	t := a.thread(id)
+	t.id, t.botID = id, u.BotID
 	if u.Sync {
 		if u.Sequence < t.sequence {
 			return
@@ -210,7 +238,7 @@ func (a *app) fold(u harness.Update) {
 		t.msgs, t.live, t.busy, t.answering, t.queued = u.Messages, u.Reply, u.Busy, u.Answering, u.Queued
 		t.approvals = map[string]*approvalCard{}
 		for _, req := range u.Approvals {
-			t.approvals[req.ID] = &approvalCard{request: req}
+			t.approvals[req.ID] = &approvalCard{request: req, botID: u.BotID}
 		}
 		return
 	}
@@ -236,7 +264,7 @@ func (a *app) fold(u harness.Update) {
 			t.approvals = map[string]*approvalCard{}
 		}
 		if t.approvals[u.Approval.ID] == nil {
-			t.approvals[u.Approval.ID] = &approvalCard{request: *u.Approval}
+			t.approvals[u.Approval.ID] = &approvalCard{request: *u.Approval, botID: u.BotID}
 		}
 	}
 	if u.ResolvedApproval != "" {
@@ -250,13 +278,14 @@ func (a *app) fold(u harness.Update) {
 		t.busy, t.live, t.answering = u.Busy, nil, ""
 		if u.Reply != nil && (u.Reply.Text != "" || len(u.Reply.Tools) > 0) {
 			t.add(*u.Reply)
-			if u.BotID != a.selected {
+			if id != a.conversationID() {
 				t.unread++
 			}
 		}
 		if u.Err != nil {
 			a.status = u.Err.Error()
 		}
+		a.refreshThreads(u.BotID)
 		// The harness saved the session cursor; pick it up.
 		if bots, err := a.api.Bots(); err == nil {
 			a.bots = bots
@@ -281,6 +310,10 @@ func (t *thread) add(m store.Message) {
 }
 
 func (a *app) send(b store.Bot, t *thread, text string) bool {
+	if meta, ok := a.threadMeta(t.id); ok && meta.Closed {
+		a.status = "This thread is closed."
+		return false
+	}
 	if strings.TrimSpace(text) == "" && len(t.attachments) == 0 {
 		return false
 	}
@@ -288,7 +321,16 @@ func (a *app) send(b store.Bot, t *thread, text string) bool {
 	if mode == "" {
 		mode = "queue"
 	}
-	m, err := a.api.Send(b.ID, text, t.attachments, mode)
+	var m store.Message
+	var err error
+	switch {
+	case t.roomID != "":
+		m, err = a.api.SendRoom(t.roomID, text, t.attachments)
+	case t.id != "" && t.id != b.ID:
+		m, err = a.api.SendThread(t.id, text, t.attachments, mode)
+	default:
+		m, err = a.api.Send(b.ID, text, t.attachments, mode)
+	}
 	if err != nil {
 		a.status = err.Error()
 		return false
@@ -342,6 +384,7 @@ func (a *app) saveForm() bool {
 			b.Cursor, b.Handoffs = "", nil
 		}
 	}
+	b.Avatar = strings.TrimSpace(a.newAvatar)
 	b.Name, b.Engine, b.Model, b.Persona = name, a.newEngine, strings.TrimSpace(a.newModel), strings.TrimSpace(a.newPersona)
 	if err := a.api.SaveBot(b); err != nil {
 		a.formErr = err.Error()
@@ -352,7 +395,8 @@ func (a *app) saveForm() bool {
 	} else {
 		a.bots = append(a.bots, b)
 	}
-	a.selected = b.ID
+	a.selectBot(b.ID)
+	a.refreshThreads(b.ID)
 	a.creating = false
 	return true
 }
@@ -360,7 +404,11 @@ func (a *app) saveForm() bool {
 func (a *app) openCreate() {
 	a.creating, a.editing, a.editID = true, false, ""
 	a.newName, a.newModel, a.newPersona, a.formErr = "", "", "", ""
-	a.newEngine = a.engines[len(a.engines)-1]
+	a.newAvatar = ""
+	a.newEngine = "echo"
+	if len(a.engines) > 0 {
+		a.newEngine = a.engines[len(a.engines)-1]
+	}
 	for _, e := range []string{"claude", "codex", "pi"} {
 		if slices.Contains(a.engines, e) {
 			a.newEngine = e
@@ -370,6 +418,7 @@ func (a *app) openCreate() {
 }
 
 func (a *app) openEdit(b store.Bot) {
+	a.newAvatar = b.Avatar
 	a.creating, a.editing, a.editID = true, true, b.ID
 	a.newName, a.newEngine, a.newModel, a.newPersona, a.formErr = b.Name, b.Engine, b.Model, b.Persona, ""
 }
@@ -410,16 +459,24 @@ func (a *app) deleteBot(id string) {
 		return
 	}
 	a.bots = slices.DeleteFunc(a.bots, func(b store.Bot) bool { return b.ID == id })
-	delete(a.threads, id)
-	a.selected = ""
-	if len(a.bots) > 0 {
-		a.selected = a.bots[0].ID
+	for _, meta := range a.botThreads[id] {
+		delete(a.threads, meta.ID)
 	}
+	delete(a.threads, id)
+	delete(a.botThreads, id)
+	a.refreshNavigation()
+	a.selectFirstVisible()
 }
 
 // selectBot shows the bot's chat, reading its replies.
 func (a *app) selectBot(id string) {
-	a.selected = id
+	a.selected, a.selectedThread, a.selectedRoom = id, "", ""
+	a.highlightID = ""
+	a.refreshThreads(id)
+	if b, ok := a.bot(id); ok && b.Unread {
+		b.Unread = false
+		a.persistBot(b)
+	}
 	if t := a.threads[id]; t != nil {
 		t.unread = 0
 	}
@@ -435,12 +492,13 @@ func (a *app) view(c *ui.Context) {
 		c.Root().Background(ui.Transparent)
 	}
 
-	modal := a.creating || a.deleting || a.viewingSessions || a.settingsOpen || a.optionsOpen
+	modal := a.creating || a.deleting || a.viewingSessions || a.settingsOpen || a.optionsOpen || a.phase3ModalOpen()
 	if !modal && c.Shortcut(ui.Cmd, ui.KeyN) {
 		a.openCreate()
 	}
-	if b, ok := a.bot(a.selected); ok && !modal && c.Shortcut(ui.Cmd, ui.KeyPeriod) {
-		a.stop(b.ID)
+	if !modal && c.Shortcut(ui.Cmd, ui.KeyPeriod) {
+		b, _ := a.bot(a.selected)
+		a.stopConversation(b)
 	}
 	ui.Split(c, &a.split, func() {
 		side := ui.Column(c).Fill()
@@ -452,6 +510,7 @@ func (a *app) view(c *ui.Context) {
 		ui.Box(c).Fill().Background(a.pal.bg).Children(func() { a.chat(c) })
 	}).Fill()
 
+	a.phase3Modals(c)
 	ui.Modal(c, &a.optionsOpen, func() { a.optionsView(c) })
 	ui.Modal(c, &a.settingsOpen, func() { a.settingsView(c) })
 	ui.Modal(c, &a.creating, func() { a.botForm(c) })
@@ -489,26 +548,7 @@ func (a *app) sidebar(c *ui.Context) {
 				a.openCreate()
 			}
 		})
-		if len(a.bots) > 5 {
-			ui.SearchField(c, &a.query).Label("Search bots").Margin(0, 0, 8, 0)
-		}
-		if len(a.bots) == 0 {
-			ui.Column(c).Grow(1).Padding(8, 10).Gap(4).Children(func() {
-				ui.Text(c, "No bots yet.").FontSize(13).TextColor(p.muted)
-				ui.Text(c, "Press ⌘N to create one.").FontSize(12).TextColor(p.faint)
-			})
-		} else {
-			ui.Text(c, "Bots").FontSize(11.5).FontWeight(600).TextColor(p.faint).Padding(6, 10, 4, 10)
-			q := strings.ToLower(strings.TrimSpace(a.query))
-			ui.Scroll(c.Key("bots")).Grow(1).Margin(0, -6).Padding(0, 6).Gap(2).Children(func() {
-				for _, b := range a.bots {
-					if q != "" && !strings.Contains(strings.ToLower(b.Name), q) {
-						continue
-					}
-					a.sidebarItem(c, b)
-				}
-			})
-		}
+		a.navigation(c)
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Padding(8, 10, 0, 10).Children(func() {
 			ui.Box(c).Size(6, 6).Radius(3).Background(ui.Oklch(0.72, 0.17, 150))
 			ui.Text(c, strings.Join(a.engines, " · ")).FontSize(11.5).TextColor(p.muted).SingleLine().Grow(1)
@@ -522,7 +562,7 @@ func (a *app) sidebar(c *ui.Context) {
 func (a *app) sidebarItem(c *ui.Context, b store.Bot) {
 	p := a.pal
 	th := a.threads[b.ID]
-	selected := b.ID == a.selected
+	selected := b.ID == a.selected && a.selectedRoom == "" && a.conversationID() == b.ID
 	row := ui.ButtonBase(c.Key(b.ID)).Height(46).PaddingX(8).Gap(10).Radius(10).AlignItems(ui.Center).Justify(ui.Start).
 		FocusRing(false).Label(b.Name).Selected(selected)
 	bg := ui.Transparent
@@ -534,7 +574,7 @@ func (a *app) sidebarItem(c *ui.Context, b store.Bot) {
 	}
 	row.Background(row.AnimateColor("bg", bg, hoverFade))
 	row.Children(func() {
-		ui.Avatar(c, b.Name, nil).FontSize(15)
+		a.avatar(c, b, 15)
 		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(1).Children(func() {
 			ui.Text(c, b.Name).FontSize(13.5).FontWeight(600).TextColor(p.text).SingleLine()
 			sub := b.Engine
@@ -546,6 +586,8 @@ func (a *app) sidebarItem(c *ui.Context, b store.Bot) {
 		switch {
 		case th != nil && th.busy:
 			ui.Spinner(c)
+		case b.Unread:
+			ui.Badge(c, "New").Background(p.accent).TextColor(p.onAccent)
 		case th != nil && th.unread > 0:
 			ui.Badge(c, fmt.Sprint(th.unread)).Background(p.accent).TextColor(p.onAccent)
 		}
@@ -553,25 +595,14 @@ func (a *app) sidebarItem(c *ui.Context, b store.Bot) {
 	if row.Clicked() {
 		a.selectBot(b.ID)
 	}
-	row.ContextMenu(func(m *ui.Menu) {
-		if m.Item("Edit…").Chosen() {
-			a.openEdit(b)
-		}
-		if m.Item("Handoff sessions…").Chosen() {
-			a.openSessions(b)
-		}
-		if m.Item("Open working folder").Chosen() {
-			a.openFolder(c, b)
-		}
-		m.Separator()
-		if m.Item("Delete…").Chosen() {
-			a.selectBot(b.ID)
-			a.deleting = true
-		}
-	})
+	row.ContextMenu(func(m *ui.Menu) { a.botMenu(c, m, b) })
 }
 
 func (a *app) chat(c *ui.Context) {
+	if a.selectedRoom != "" {
+		a.roomChat(c)
+		return
+	}
 	p := a.pal
 	b, ok := a.bot(a.selected)
 	if !ok {
@@ -587,7 +618,7 @@ func (a *app) chat(c *ui.Context) {
 		})
 		return
 	}
-	t := a.thread(b.ID)
+	t := a.thread(a.conversationID())
 	t.unread = 0
 	t.list.Key = func(i int) any {
 		if i < len(t.msgs) {
@@ -599,13 +630,14 @@ func (a *app) chat(c *ui.Context) {
 	if t.live != nil {
 		rows++
 	}
-	ui.Column(c.Key(b.ID)).Fill().Children(func() {
+	ui.Column(c.Key(a.conversationID())).Fill().Children(func() {
 		a.header(c, b, t)
+		a.conversationActions(c, t)
 		if rows == 0 {
 			// The list keeps its rows at the bottom; the greeting goes in
 			// the middle.
 			ui.Column(c).Grow(1).Center().Gap(10).Padding(20, 24).Children(func() {
-				ui.Avatar(c, b.Name, nil).FontSize(28)
+				a.avatar(c, b, 28)
 				ui.Text(c, "Say hello to "+b.Name+".").FontSize(18).FontWeight(700).Margin(6, 0, 0, 0)
 				if b.Persona != "" {
 					ui.Text(c, b.Persona).FontSize(13).TextColor(p.muted).TextAlign(ui.Center).MaxLines(3).MaxWidth(420)
@@ -614,9 +646,9 @@ func (a *app) chat(c *ui.Context) {
 		} else {
 			ui.List(c, &t.list, rows, func(i int) {
 				if i < len(t.msgs) {
-					a.message(c, b, &t.msgs[i], true)
+					a.chatMessage(c, b, &t.msgs[i], true)
 				} else {
-					a.message(c, b, t.live, false)
+					a.chatMessage(c, b, t.live, false)
 				}
 			}).Grow(1).Padding(24, 28, 12, 28).Gap(22).Justify(ui.End)
 		}
@@ -662,7 +694,7 @@ func (a *app) header(c *ui.Context, b store.Bot, t *thread) {
 	ui.Row(c).Height(topBar(c)).Gap(10).AlignItems(ui.Center).Padding(0, 14, 0, 20).
 		BorderWidth(0, 0, 1, 0).BorderColor(p.hairline).DragWindow().Children(func() {
 		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(1).Children(func() {
-			ui.Text(c, b.Name).FontSize(14).FontWeight(700).SingleLine()
+			ui.Text(c, a.conversationTitle(b)).FontSize(14).FontWeight(700).SingleLine()
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 				model := b.Model
 				if model == "" {
@@ -695,6 +727,9 @@ func (a *app) header(c *ui.Context, b store.Bot, t *thread) {
 // composer is a card along the foot of the chat: the draft over a row of
 // the hint and the send button.
 func (a *app) composer(c *ui.Context, b store.Bot, t *thread) {
+	if meta, ok := a.threadMeta(t.id); ok && meta.Closed {
+		return
+	}
 	p := a.pal
 	card := ui.Column(c).Gap(6).Margin(4, 24, 18, 24).Padding(12, 10, 10, 16).Radius(16).Background(p.field)
 	card.Children(func() {
@@ -725,9 +760,9 @@ func (a *app) composer(c *ui.Context, b store.Bot, t *thread) {
 		}
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			if a.iconButton(c, plusIcon, "Attach image", "Attach images").Clicked() {
-				a.pickImages(b.ID)
+				a.pickImages(a.conversationID())
 			}
-			if ui.Button(c, "Model & permissions").FontSize(11).Clicked() {
+			if ui.Button(c, "Model & permissions").FontSize(11).Disabled(t.roomID != "").Clicked() {
 				a.openOptions(b)
 			}
 			ui.Box(c).Grow(1)
@@ -735,9 +770,11 @@ func (a *app) composer(c *ui.Context, b store.Bot, t *thread) {
 				if t.sendMode == "" {
 					t.sendMode = "queue"
 				}
-				ui.Select(c, &t.sendMode, []string{"queue", "steer"}).Label("Send mode").Width(90)
+				if t.roomID == "" {
+					ui.Select(c, &t.sendMode, []string{"queue", "steer"}).Label("Send mode").Width(90)
+				}
 				if a.sendButton(c, stopIcon, "Stop", "Stop (⌘.)", p.text, p.bg, false).Clicked() {
-					a.stop(b.ID)
+					a.stopConversation(b)
 				}
 			}
 			empty := strings.TrimSpace(t.draft) == "" && len(t.attachments) == 0
@@ -814,7 +851,7 @@ func (a *app) message(c *ui.Context, b store.Bot, m *store.Message, done bool) {
 		})
 	default:
 		ui.Row(c).Gap(12).AlignItems(ui.Start).PaddingEnd(40).Children(func() {
-			ui.Avatar(c, b.Name, nil).FontSize(14)
+			a.avatar(c, b, 14)
 			ui.Column(c).Grow(1).Shrink(1).MinWidth(0).MaxWidth(760).Gap(8).Children(func() {
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Height(28).Children(func() {
 					ui.Text(c, b.Name).FontSize(13).FontWeight(600)
@@ -958,7 +995,7 @@ func (a *app) botForm(c *ui.Context) {
 					ui.Icon(c, botIcon).Size(20, 20).TextColor(p.accent)
 				})
 			} else {
-				ui.Avatar(c, name, nil).FontSize(20)
+				a.avatar(c, store.Bot{Name: name, Avatar: a.newAvatar}, 20)
 			}
 			ui.Text(c, title).FontSize(17).FontWeight(700)
 		})
@@ -969,6 +1006,7 @@ func (a *app) botForm(c *ui.Context) {
 			})
 		}
 		field("Name", func() { ui.TextInput(c, &a.newName).Placeholder("Name").Label("Name").AutoFocus() })
+		field("Avatar (emoji or initials)", func() { ui.TextInput(c, &a.newAvatar).Placeholder("Emoji or initials (optional)").Label("Avatar") })
 		field("Engine", func() { ui.Select(c, &a.newEngine, a.formEngines()).Label("Engine") })
 		field("Model", func() {
 			ui.TextInput(c, &a.newModel).Placeholder("Empty for the engine's default").Label("Model")

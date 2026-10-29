@@ -50,7 +50,10 @@ func (h *Harness) Listen(exe string) error {
 	mux.HandleFunc("POST /list_bots", hd.serveList)
 	mux.HandleFunc("POST /ask_bot", hd.serveAsk)
 	mux.HandleFunc("POST /approve", hd.serveApprove)
-	hd.srv = &http.Server{Handler: mux}
+	mux.HandleFunc("POST /list_threads", hd.serveThreads)
+	mux.HandleFunc("POST /close_thread", hd.serveCloseThread)
+	mux.HandleFunc("POST /list_room_targets", hd.serveRoomTargets)
+	hd.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	h.mu.Lock()
 	if h.closed || h.hand != nil {
 		h.mu.Unlock()
@@ -69,7 +72,7 @@ func (h *Harness) Close() error {
 	h.closed = true
 	hd := h.hand
 	h.hand = nil
-	var waits []<-chan struct{}
+	waits := h.cancelRoutesLocked(func(*roomRoute) bool { return true })
 	for id, t := range h.running {
 		h.stopLocked(id)
 		waits = append(waits, t.done)
@@ -170,7 +173,7 @@ func (hd *handoff) serveList(w http.ResponseWriter, r *http.Request) {
 	}
 	var b strings.Builder
 	for _, o := range bots {
-		if o.ID == from.bot.ID {
+		if o.ID == from.bot.ID || !hd.allowedTarget(from, o.ID) {
 			continue
 		}
 		b.WriteString("- " + o.Name)
@@ -200,7 +203,7 @@ func (hd *handoff) serveAsk(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, "", fmt.Errorf("bad request: %v", err))
 		return
 	}
-	text, err := hd.h.ask(r.Context(), from, req.Name, req.Question)
+	text, err := hd.h.dispatchThread(from, req.Name, req.Question, req.Thread)
 	if err != nil {
 		reply(w, http.StatusOK, "", err)
 		return
