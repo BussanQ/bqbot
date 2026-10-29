@@ -1,0 +1,6 @@
+{
+  "name": "bqbot",
+  "identifier": "dev.bussanq.bqbot",
+  "version": "0.1.0",
+  "out": "build"
+}

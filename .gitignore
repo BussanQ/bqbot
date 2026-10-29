@@ -1,0 +1,8 @@
+.DS_Store
+.agent/
+build/
+.env
+.env.*
+!.env.example
+*.test
+coverage.out
