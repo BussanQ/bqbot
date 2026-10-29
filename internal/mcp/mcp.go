@@ -23,8 +23,9 @@ import (
 // Grant is the content of the grant file the app writes (mode 0600) for a
 // turn and removes when the turn ends.
 type Grant struct {
-	URL   string `json:"url"`
-	Token string `json:"token"`
+	URL          string `json:"url"`
+	Token        string `json:"token"`
+	ApprovalOnly bool   `json:"approval_only,omitempty"`
 }
 
 // Server is the server's name in the engines' configs; tools reach the model
@@ -59,7 +60,7 @@ func Main(args []string) error {
 	if err := json.Unmarshal(b, &g); err != nil || g.URL == "" || g.Token == "" {
 		return fmt.Errorf("%s is not a bqbot grant file", args[0])
 	}
-	return Serve(context.Background(), os.Stdin, os.Stdout, &HTTPBackend{URL: g.URL, Token: g.Token})
+	return Serve(context.Background(), os.Stdin, os.Stdout, &HTTPBackend{URL: g.URL, Token: g.Token, ApprovalOnly: g.ApprovalOnly})
 }
 
 type request struct {
@@ -128,7 +129,7 @@ func Serve(ctx context.Context, r io.Reader, w io.Writer, b Backend) error {
 		w.Write(append(line, '\n'))
 		wmu.Unlock()
 	}
-	defer pending.Wait()
+	defer func() { cancelAll(); pending.Wait() }()
 
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 16<<20)
@@ -169,12 +170,12 @@ func Serve(ctx context.Context, r io.Reader, w io.Writer, b Backend) error {
 			reply(response{ID: req.ID, Result: map[string]any{
 				"protocolVersion": v,
 				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]any{"name": Server, "version": "1"},
+				"serverInfo":      map[string]any{"name": backendName(b), "version": "1"},
 			}})
 		case "ping":
 			reply(response{ID: req.ID, Result: map[string]any{}})
 		case "tools/list":
-			reply(response{ID: req.ID, Result: toolList})
+			reply(response{ID: req.ID, Result: backendTools(b)})
 		case "tools/call":
 			callCtx, cancel := context.WithCancel(ctx)
 			key := string(req.ID)
@@ -199,6 +200,9 @@ func Serve(ctx context.Context, r io.Reader, w io.Writer, b Backend) error {
 }
 
 func call(ctx context.Context, b Backend, params json.RawMessage) map[string]any {
+	if approvalRestricted(b) {
+		return callApproval(ctx, b, params)
+	}
 	var p struct {
 		Name      string `json:"name"`
 		Arguments struct {
@@ -230,8 +234,9 @@ func toolResult(text string, err error) map[string]any {
 
 // HTTPBackend calls the app's handoff endpoint.
 type HTTPBackend struct {
-	URL   string // http://127.0.0.1:port
-	Token string
+	URL          string // http://127.0.0.1:port
+	Token        string
+	ApprovalOnly bool
 	// Client is a client without a proxy or timeout when nil: an ask waits
 	// for a whole turn of the other bot.
 	Client *http.Client

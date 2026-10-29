@@ -214,7 +214,7 @@ func TestAskDepthLimit(t *testing.T) {
 }
 
 func TestAskBusyAndUnknown(t *testing.T) {
-	r := newRig(t, &asker{}, &driver.Echo{Delay: time.Second})
+	r := newRig(t, &asker{}, &driver.Echo{Delay: 5 * time.Millisecond})
 	ada := r.bot("Ada", "asker", "")
 	bo := r.bot("Bo", "echo", "")
 	if _, err := r.h.Send(bo, "a long answer"); err != nil {
@@ -222,14 +222,12 @@ func TestAskBusyAndUnknown(t *testing.T) {
 	}
 	r.h.Send(ada, "ask Bo anything")
 	u := r.wait(ada.ID)
-	if u.Reply.Text != "failed: Bo is busy with another conversation; try again later or answer without it" {
-		t.Errorf("busy: %q", u.Reply.Text)
+	if !strings.HasPrefix(u.Reply.Text, "got: Echo: Ada, another") {
+		t.Fatalf("queued handoff: %q", u.Reply.Text)
 	}
-	if strings.Join(u.Reply.Tools, "|") != "转交给 Bo 失败：它正忙" {
-		t.Errorf("busy tools %q", u.Reply.Tools)
+	if strings.Join(u.Reply.Tools, "|") != "已转交给 Bo" {
+		t.Fatalf("tools: %v", u.Reply.Tools)
 	}
-	r.h.Stop(bo.ID)
-	r.wait(bo.ID)
 
 	r.h.Send(ada, "ask Nobody anything")
 	if u := r.wait(ada.ID); !strings.Contains(u.Reply.Text, `no bot is named "Nobody"`) {
@@ -254,6 +252,9 @@ func TestStopCallerStopsTarget(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+	// Busy reserves a FIFO slot before prepare writes the user message. This
+	// test stops an executing handoff; queued cancellation is covered separately.
+	eventually(t, func() bool { msgs, err := r.st.HandoffTranscript(bo.ID, ada.ID); return err == nil && len(msgs) > 0 })
 	r.h.Stop(ada.ID)
 	r.wait(bo.ID)
 	r.wait(ada.ID)

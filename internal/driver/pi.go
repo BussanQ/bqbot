@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,14 +11,15 @@ import (
 	"bqbot/internal/mcp"
 )
 
-// Pi runs turns on the pi coding agent (`pi -p --mode json`). Pi has no
-// approval prompts, so until the app has approval cards a bot on pi gets
-// the read-only built-in tools and, at most, the bqbot MCP tools.
+// Pi runs the coding agent RPC protocol with a bundled tool permission extension.
 type Pi struct {
 	Bin string // "" is "pi"
 }
 
 func (d *Pi) Name() string { return "pi" }
+
+// SupportsSteering reports that active turns accept additional text.
+func (*Pi) SupportsSteering() bool { return true }
 
 func (d *Pi) Binary() string {
 	if d.Bin != "" {
@@ -28,15 +28,15 @@ func (d *Pi) Binary() string {
 	return "pi"
 }
 
-// Args returns the CLI arguments for a turn; the prompt goes on stdin.
+// Args returns CLI options; commands and replies are JSON lines on stdin.
 func (d *Pi) Args(in TurnInput) []string {
-	args := []string{"-p", "--mode", "json"}
+	args := []string{"--mode", "rpc", "--no-extensions"}
 	if in.MCP != nil {
 		// An mcp__ entry limits MCP tools to the ones named; --approve
 		// trusts the bot's folder, where Run wrote .pi/mcp.json.
-		args = append(args, "--tools", "read,grep,find,ls,"+strings.Join(mcpToolNames(), ","), "--approve")
+		args = append(args, "--extension", "builtin:mcp", "--tools", "read,grep,find,ls,edit,write,bash,"+strings.Join(mcpToolNames(), ","), "--approve")
 	} else {
-		args = append(args, "--tools", "read,grep,find,ls", "--no-mcp")
+		args = append(args, "--tools", "read,grep,find,ls,edit,write,bash", "--no-mcp")
 	}
 	if in.Model != "" {
 		args = append(args, "--model", in.Model)
@@ -45,8 +45,11 @@ func (d *Pi) Args(in TurnInput) []string {
 		args = append(args, "--append-system-prompt", in.System)
 	}
 	if in.Cursor != "" {
-		// Opens that session of the bot's folder, or creates it if it is gone.
-		args = append(args, "--session-id", in.Cursor)
+		// Resume existing state rather than silently creating a missing session.
+		args = append(args, "--session", in.Cursor)
+	}
+	if in.Effort != "" {
+		args = append(args, "--thinking", in.Effort)
 	}
 	return args
 }
@@ -85,21 +88,7 @@ func writeMCPConfig(dir string, s *MCPServer) error {
 }
 
 func (d *Pi) Run(ctx context.Context, in TurnInput, emit func(Event)) error {
-	if err := writeMCPConfig(in.Dir, in.MCP); err != nil {
-		return err
-	}
-	p := &piParser{emit: emit}
-	if err := runLines(ctx, d.Binary(), d.Args(in), in.Dir, in.Text, p.line); err != nil {
-		return err
-	}
-	// Pi exits 0 when the provider fails, so the stream says how it went.
-	switch {
-	case !p.settled:
-		return fmt.Errorf("%w: pi ended before the turn settled", ErrTurnFailed)
-	case p.lastErr != "":
-		return fmt.Errorf("%w: %s", ErrTurnFailed, p.lastErr)
-	}
-	return nil
+	return d.runRPC(ctx, in, emit)
 }
 
 type piLine struct {
@@ -160,6 +149,7 @@ func (p *piParser) line(b []byte) error {
 			}
 			return nil
 		case "aborted":
+			p.lastErr = "pi turn aborted"
 			return nil
 		}
 		p.lastErr = ""

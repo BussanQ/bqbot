@@ -14,6 +14,7 @@ func TestTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := New(st, &driver.Echo{})
+	t.Cleanup(func() { h.Close() })
 	done := make(chan Update, 1)
 	h.OnUpdate = func(u Update) {
 		if u.Done {
@@ -52,6 +53,7 @@ func TestTurn(t *testing.T) {
 func TestBusyAndStop(t *testing.T) {
 	st, _ := store.Open(t.TempDir())
 	h := New(st, &driver.Echo{Delay: time.Second})
+	t.Cleanup(func() { h.Close() })
 	done := make(chan Update, 1)
 	h.OnUpdate = func(u Update) {
 		if u.Done {
@@ -63,7 +65,7 @@ func TestBusyAndStop(t *testing.T) {
 	if _, err := h.Send(bot, "one two three"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.Send(bot, "again"); err != ErrBusy {
+	if _, err := h.Send(bot, "again"); err != nil {
 		t.Errorf("second send: %v", err)
 	}
 	h.Stop(bot.ID)

@@ -13,16 +13,20 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"bqbot/internal/driver"
 )
 
 // Bot is an agent the person chats with.
 type Bot struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Engine  string `json:"engine"`            // driver name: claude, codex, pi, echo
-	Model   string `json:"model,omitempty"`   // "" is the engine's default
-	Persona string `json:"persona,omitempty"` // system prompt
-	Cursor  string `json:"cursor,omitempty"`  // provider-native session to resume
+	Effort       string `json:"effort,omitempty"`
+	ApprovalMode string `json:"approval_mode,omitempty"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Engine       string `json:"engine"`            // driver name: claude, codex, pi, echo
+	Model        string `json:"model,omitempty"`   // "" is the engine's default
+	Persona      string `json:"persona,omitempty"` // system prompt
+	Cursor       string `json:"cursor,omitempty"`  // provider-native session to resume
 	// Handoffs are the sessions in which the bot answers other bots, apart
 	// from its conversation with the person: the asking bot's ID to the
 	// session to resume.
@@ -32,12 +36,13 @@ type Bot struct {
 
 // Message is one entry of a bot's transcript.
 type Message struct {
-	ID    string    `json:"id"`
-	Role  string    `json:"role"` // user, assistant, error
-	Text  string    `json:"text"`
-	From  string    `json:"from,omitempty"` // in a handoff transcript, the user message's asking bot
-	Tools []string  `json:"tools,omitempty"`
-	At    time.Time `json:"at"`
+	Attachments []driver.Attachment `json:"attachments,omitempty"`
+	ID          string              `json:"id"`
+	Role        string              `json:"role"` // user, assistant, error
+	Text        string              `json:"text"`
+	From        string              `json:"from,omitempty"` // in a handoff transcript, the user message's asking bot
+	Tools       []string            `json:"tools,omitempty"`
+	At          time.Time           `json:"at"`
 }
 
 // Store is the app's data directory. Its methods are safe for concurrent use.
@@ -93,19 +98,14 @@ func (s *Store) readBots() ([]Bot, error) {
 }
 
 func (s *Store) writeBots(bots []Bot) error {
-	b, err := json.MarshalIndent(bots, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := s.botsPath() + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.botsPath())
+	return writeJSON(s.botsPath(), bots)
 }
 
 // SaveBot adds the bot, or replaces the one with its ID.
 func (s *Store) SaveBot(bot Bot) error {
+	if !validID(bot.ID) {
+		return fmt.Errorf("invalid bot id %q", bot.ID)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	bots, err := s.readBots()
@@ -114,6 +114,10 @@ func (s *Store) SaveBot(bot Bot) error {
 	}
 	for i := range bots {
 		if bots[i].ID == bot.ID {
+			if !sameSession(bots[i], bot) {
+				bot.Cursor = ""
+				bot.Handoffs = nil
+			}
 			bots[i] = bot
 			return s.writeBots(bots)
 		}
@@ -154,6 +158,9 @@ func (s *Store) DeleteBot(id string) error {
 			return err
 		}
 	}
+	if err := s.deleteEvents(id, kept); err != nil {
+		return err
+	}
 	return os.RemoveAll(filepath.Join(s.dir, "work", id))
 }
 
@@ -188,24 +195,27 @@ func (s *Store) AppendHandoff(botID, askerID string, m Message) error {
 	if !validID(botID) || !validID(askerID) {
 		return fmt.Errorf("invalid bot id %q or %q", botID, askerID)
 	}
-	if err := os.MkdirAll(filepath.Dir(s.handoffPath(botID, askerID)), 0o700); err != nil {
-		return err
-	}
 	return s.appendTo(s.handoffPath(botID, askerID), m)
 }
 
-func (s *Store) appendTo(path string, m Message) error {
+func (s *Store) appendTo(path string, m any) error {
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	_, err = f.Write(append(b, '\n'))
+	if err == nil {
+		err = f.Sync()
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -243,7 +253,7 @@ func (s *Store) read(path string) ([]Message, error) {
 	defer f.Close()
 	var msgs []Message
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64*1024), 16<<20)
+	sc.Buffer(make([]byte, 64*1024), 32<<20)
 	for sc.Scan() {
 		var m Message
 		if json.Unmarshal(sc.Bytes(), &m) == nil {

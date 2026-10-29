@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -112,59 +113,6 @@ func TestClaudeNoResult(t *testing.T) {
 	}
 }
 
-const codexStream = `{"type":"thread.started","thread_id":"t1"}
-{"type":"turn.started"}
-{"type":"item.started","item":{"id":"i0","type":"command_execution","command":"bash -lc ls","status":"in_progress"}}
-{"type":"item.completed","item":{"id":"i0","type":"command_execution","command":"bash -lc ls","status":"completed"}}
-{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"First."}}
-{"type":"item.completed","item":{"id":"i2","type":"agent_message","text":"Second."}}
-{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}
-`
-
-func TestCodex(t *testing.T) {
-	bin, dir := fakeCLI(t, codexStream, 0)
-	d := &Codex{Bin: bin}
-	evs, err := collect(t, d, TurnInput{Text: "hi", System: "Be brief.", Dir: dir})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := text(evs); got != "First.Second." {
-		t.Errorf("text %q", got)
-	}
-	if !slices.Contains(evs, Event{Kind: EvTool, Text: "shell: bash -lc ls"}) || !slices.Contains(evs, Event{Kind: EvSession, Cursor: "t1"}) {
-		t.Errorf("events %v", evs)
-	}
-	if got := read(t, filepath.Join(dir, "stdin")); !strings.Contains(got, "Be brief.") || !strings.HasSuffix(got, "hi") {
-		t.Errorf("a new session's stdin %q lacks the persona", got)
-	}
-	args := strings.Fields(read(t, filepath.Join(dir, "args")))
-	if args[0] != "exec" || slices.Contains(args, "resume") || args[len(args)-1] != "-" {
-		t.Errorf("args %q", args)
-	}
-
-	if _, err := collect(t, d, TurnInput{Text: "again", System: "Be brief.", Cursor: "t1", Dir: dir}); err != nil {
-		t.Fatal(err)
-	}
-	args = strings.Fields(read(t, filepath.Join(dir, "args")))
-	if !slices.Equal(args[:2], []string{"exec", "resume"}) || !slices.Equal(args[len(args)-2:], []string{"t1", "-"}) {
-		t.Errorf("resume args %q", args)
-	}
-	if got := read(t, filepath.Join(dir, "stdin")); got != "again" {
-		t.Errorf("a resumed session's stdin %q", got)
-	}
-}
-
-func TestCodexFailed(t *testing.T) {
-	bin, dir := fakeCLI(t, `{"type":"thread.started","thread_id":"t1"}
-{"type":"error","message":"Reconnecting... 1/5"}
-{"type":"turn.failed","error":{"message":"usage limit reached"}}
-`, 1)
-	_, err := collect(t, &Codex{Bin: bin}, TurnInput{Text: "x", Dir: dir})
-	if !errors.Is(err, ErrTurnFailed) || !strings.Contains(err.Error(), "usage limit") {
-		t.Errorf("err %v", err)
-	}
-}
-
 func TestStop(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script CLI")
@@ -199,47 +147,51 @@ const piStream = `{"type":"session","version":3,"id":"p1","timestamp":"2026-10-2
 {"type":"agent_settled","aborted":false}
 `
 
-func TestPi(t *testing.T) {
-	bin, dir := fakeCLI(t, piStream, 0)
-	d := &Pi{Bin: bin}
-	evs, err := collect(t, d, TurnInput{Text: "hi", System: "Be brief.", Model: "openai/gpt-5", Cursor: "p0", Dir: dir})
-	if err != nil {
-		t.Fatal(err)
+func collectPiParser(t *testing.T, stream string) ([]Event, error) {
+	t.Helper()
+	var evs []Event
+	p := &piParser{emit: func(e Event) { evs = append(evs, e) }}
+	for _, line := range strings.Split(stream, "\n") {
+		if err := p.line([]byte(line)); err != nil {
+			return evs, err
+		}
 	}
-	// Deltas stream; a message without deltas comes whole; thinking is left out.
-	if got := text(evs); got != "Looking.Done." {
-		t.Errorf("text %q", got)
+	if p.lastErr != "" {
+		return evs, fmt.Errorf("%w: %s", ErrTurnFailed, p.lastErr)
+	}
+	return evs, nil
+}
+
+func TestPiParser(t *testing.T) {
+	evs, err := collectPiParser(t, piStream)
+	if err != nil || text(evs) != "Looking.Done." {
+		t.Fatalf("events %v error %v", evs, err)
 	}
 	if !slices.Contains(evs, Event{Kind: EvTool, Text: "ls: ."}) || !slices.Contains(evs, Event{Kind: EvSession, Cursor: "p1"}) {
 		t.Errorf("events %v", evs)
 	}
-	args := strings.Fields(read(t, filepath.Join(dir, "args")))
-	for _, want := range [][]string{{"--mode", "json"}, {"--tools", "read,grep,find,ls"}, {"--model", "openai/gpt-5"}, {"--session-id", "p0"}} {
-		i := slices.Index(args, want[0])
-		if i < 0 || i+1 >= len(args) || args[i+1] != want[1] {
+	args := (&Pi{}).Args(TurnInput{Model: "openai/gpt-5", Cursor: "p0", Effort: "high"})
+	for _, want := range [][]string{{"--mode", "rpc"}, {"--model", "openai/gpt-5"}, {"--session", "p0"}, {"--thinking", "high"}} {
+		if after(args, want[0]) != want[1] {
 			t.Errorf("args %q lack %q", args, want)
 		}
 	}
-	if !slices.Contains(args, "--no-mcp") {
-		t.Errorf("args %q lack --no-mcp", args)
-	}
-	if got := read(t, filepath.Join(dir, "stdin")); got != "hi" {
-		t.Errorf("stdin %q", got)
+	if !slices.Contains(args, "--no-extensions") || !slices.Contains(args, "--no-mcp") {
+		t.Errorf("args %q", args)
 	}
 }
 
 // Pi exits 0 when the provider fails; the error is in the stream, as the
 // real CLI printed it.
 func TestPiProviderError(t *testing.T) {
-	bin, dir := fakeCLI(t, `{"type":"session","version":3,"id":"p1"}
+	evs, err := collectPiParser(t, `{"type":"session","version":3,"id":"p1"}
 {"type":"message_start","message":{"role":"assistant","content":[]}}
 {"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"Connection error."}}
 {"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":2000,"errorMessage":"Connection error."}
 {"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"Connection error."}}
 {"type":"auto_retry_end","success":false,"attempt":3,"finalError":"Connection error."}
 {"type":"agent_settled","aborted":false}
-`, 0)
-	evs, err := collect(t, &Pi{Bin: bin}, TurnInput{Text: "x", Dir: dir})
+`)
 	if !errors.Is(err, ErrTurnFailed) || !strings.Contains(err.Error(), "Connection error.") {
 		t.Errorf("err %v", err)
 	}
@@ -251,15 +203,14 @@ func TestPiProviderError(t *testing.T) {
 
 // A retry that succeeds clears the error of the attempt before it.
 func TestPiRetrySucceeds(t *testing.T) {
-	bin, dir := fakeCLI(t, `{"type":"session","version":3,"id":"p1"}
+	evs, err := collectPiParser(t, `{"type":"session","version":3,"id":"p1"}
 {"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"529 overloaded"}}
 {"type":"auto_retry_start","attempt":1}
 {"type":"message_start","message":{"role":"assistant","content":[]}}
 {"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}],"stopReason":"stop"}}
 {"type":"auto_retry_end","success":true,"attempt":2}
 {"type":"agent_settled","aborted":false}
-`, 0)
-	evs, err := collect(t, &Pi{Bin: bin}, TurnInput{Text: "x", Dir: dir})
+`)
 	if err != nil || text(evs) != "ok" {
 		t.Errorf("text %q, err %v", text(evs), err)
 	}
@@ -305,17 +256,13 @@ func TestClaudeMCP(t *testing.T) {
 	}
 
 	collect(t, &Claude{Bin: bin}, TurnInput{Text: "x", Dir: dir})
-	if args := argLines(t, dir); slices.Contains(args, "--mcp-config") || slices.Contains(args, "--allowedTools") {
+	if args := argLines(t, dir); !slices.Contains(args, "--strict-mcp-config") || slices.Contains(args, "--allowedTools") {
 		t.Errorf("args without MCP %q", args)
 	}
 }
 
 func TestCodexMCP(t *testing.T) {
-	bin, dir := fakeCLI(t, codexStream, 0)
-	if _, err := collect(t, &Codex{Bin: bin}, TurnInput{Text: "x", Dir: dir, MCP: testMCP}); err != nil {
-		t.Fatal(err)
-	}
-	args := argLines(t, dir)
+	args := (&Codex{}).Args(TurnInput{MCP: testMCP})
 	for _, want := range []string{
 		`mcp_servers.bqbot.command="/Apps/bq bot"`,
 		`mcp_servers.bqbot.args=["mcp","/tmp/grant.json"]`,
@@ -328,19 +275,19 @@ func TestCodexMCP(t *testing.T) {
 			t.Errorf("args %q lack -c %s", args, want)
 		}
 	}
-	if args[len(args)-1] != "-" {
+	if args[0] != "app-server" {
 		t.Errorf("args %q", args)
 	}
 }
 
 func TestPiMCP(t *testing.T) {
-	bin, dir := fakeCLI(t, piStream, 0)
-	if _, err := collect(t, &Pi{Bin: bin}, TurnInput{Text: "x", Dir: dir, MCP: testMCP}); err != nil {
+	dir := t.TempDir()
+	if err := writeMCPConfig(dir, testMCP); err != nil {
 		t.Fatal(err)
 	}
-	args := argLines(t, dir)
+	args := (&Pi{}).Args(TurnInput{MCP: testMCP})
 	if slices.Contains(args, "--no-mcp") || !slices.Contains(args, "--approve") ||
-		after(args, "--tools") != "read,grep,find,ls,mcp__bqbot__ask_bot,mcp__bqbot__list_bots" {
+		after(args, "--tools") != "read,grep,find,ls,edit,write,bash,mcp__bqbot__ask_bot,mcp__bqbot__list_bots" {
 		t.Errorf("args %q", args)
 	}
 	cfgPath := filepath.Join(dir, ".pi", "mcp.json")
@@ -364,13 +311,13 @@ func TestPiMCP(t *testing.T) {
 	}
 
 	// A turn without the server removes the config and turns MCP off.
-	if _, err := collect(t, &Pi{Bin: bin}, TurnInput{Text: "x", Dir: dir}); err != nil {
+	if err := writeMCPConfig(dir, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(cfgPath); !os.IsNotExist(err) {
 		t.Errorf("config left: %v", err)
 	}
-	if args := argLines(t, dir); !slices.Contains(args, "--no-mcp") || slices.Contains(args, "--approve") {
+	if args := (&Pi{}).Args(TurnInput{}); !slices.Contains(args, "--no-mcp") || slices.Contains(args, "--approve") {
 		t.Errorf("args %q", args)
 	}
 }

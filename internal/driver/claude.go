@@ -3,15 +3,14 @@ package driver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"bqbot/internal/mcp"
 )
 
-// Claude runs turns on the Claude Code CLI in print mode with stream-json
-// output. Tools that would need a person's approval are refused
-// (--permission-mode dontAsk) until the app has approval cards.
+// Claude runs print-mode stream-json turns with a separate permission MCP server.
 type Claude struct {
 	Bin string // "" is "claude"
 }
@@ -27,10 +26,19 @@ func (d *Claude) Binary() string {
 
 // Args returns the CLI arguments for a turn; the prompt goes on stdin.
 func (d *Claude) Args(in TurnInput) []string {
-	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-		"--permission-mode", "dontAsk"}
+	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
+	// Keep permission handling with the bridge even for automatic modes: the
+	// harness applies their policy. Never bypass permissions at the CLI level.
+	if in.ApprovalMCP == nil {
+		args = append(args, "--permission-mode", "dontAsk")
+	} else {
+		args = append(args, "--permission-mode", "manual", "--permission-prompt-tool", mcp.ApprovalToolName)
+	}
 	if in.Model != "" {
 		args = append(args, "--model", in.Model)
+	}
+	if in.Effort != "" {
+		args = append(args, "--effort", in.Effort)
 	}
 	if in.System != "" {
 		args = append(args, "--append-system-prompt", in.System)
@@ -38,14 +46,29 @@ func (d *Claude) Args(in TurnInput) []string {
 	if in.Cursor != "" {
 		args = append(args, "--resume", in.Cursor)
 	}
-	if s := in.MCP; s != nil {
-		cfg, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{mcp.Server: map[string]any{
-			"type": "stdio", "command": s.Command, "args": s.Args,
-		}}})
-		// Only the bqbot server, and only its tools are allowed without asking.
-		args = append(args, "--mcp-config", string(cfg), "--strict-mcp-config",
-			"--allowedTools", strings.Join(mcpToolNames(), ","))
+	if claudeStructuredInput(in) {
+		args = append(args, "--input-format", "stream-json")
 	}
+	servers := map[string]any{}
+	allowed := []string{}
+	for name, server := range map[string]*MCPServer{mcp.Server: in.MCP, mcp.ApprovalServer: in.ApprovalMCP} {
+		if server == nil {
+			continue
+		}
+		servers[name] = map[string]any{"type": "stdio", "command": server.Command, "args": server.Args}
+	}
+	if in.MCP != nil {
+		allowed = append(allowed, mcpToolNames()...)
+	}
+	if in.ApprovalMCP != nil {
+		allowed = append(allowed, mcp.ApprovalToolName)
+	}
+	cfg, _ := json.Marshal(map[string]any{"mcpServers": servers})
+	args = append(args, "--mcp-config", string(cfg), "--strict-mcp-config", "--setting-sources", "")
+	if len(allowed) > 0 {
+		args = append(args, "--allowedTools", strings.Join(allowed, ","))
+	}
+
 	return args
 }
 
@@ -59,10 +82,22 @@ func mcpToolNames() []string {
 }
 
 func (d *Claude) Run(ctx context.Context, in TurnInput, emit func(Event)) error {
-	p := &claudeParser{emit: emit}
-	if err := runLines(ctx, d.Binary(), d.Args(in), in.Dir, in.Text, p.line); err != nil {
+	prompt, err := claudeInput(in)
+	if err != nil {
 		return err
 	}
+	p := &claudeParser{emit: emit}
+	bin := d.Binary()
+	if in.Settings.Path != "" {
+		bin = in.Settings.Path
+	}
+	if err := runLines(ctx, bin, d.Args(in), in.Dir, prompt, p.line); err != nil {
+		if in.Cursor != "" && !p.sawText && !p.sawTool && !errors.Is(err, context.Canceled) && claudeSessionMissing(err.Error()) {
+			return fmt.Errorf("%w: %v", ErrSessionExpired, err)
+		}
+		return err
+	}
+
 	if !p.done {
 		return fmt.Errorf("%w: claude ended without a result", ErrTurnFailed)
 	}
@@ -97,6 +132,7 @@ type claudeParser struct {
 	emit     func(Event)
 	sawDelta bool // text deltas came for the assistant message in progress
 	sawText  bool
+	sawTool  bool
 	done     bool
 }
 
@@ -127,6 +163,7 @@ func (p *claudeParser) line(b []byte) error {
 					p.emit(Event{Kind: EvText, Text: c.Text})
 				}
 			case "tool_use":
+				p.sawTool = true
 				p.emit(Event{Kind: EvTool, Text: toolLabel(c.Name, c.Input)})
 			}
 		}
@@ -162,4 +199,52 @@ func toolLabel(name string, input map[string]any) string {
 		}
 	}
 	return name
+}
+
+func claudeSessionMissing(message string) bool {
+	s := strings.ToLower(message)
+	return strings.Contains(s, "no conversation found with session id") ||
+		strings.Contains(s, "session not found") || strings.Contains(s, "session has expired")
+}
+
+func claudeStructuredInput(in TurnInput) bool {
+	return len(in.Attachments) > 0 || (in.Cursor == "" && len(in.History) > 0)
+}
+
+// Replay is sent as context in one user prompt, never as independent turns
+// which could execute historical tools again.
+func claudeInput(in TurnInput) (string, error) {
+	if !claudeStructuredInput(in) {
+		return in.Text, nil
+	}
+	content := []any{}
+	addText := func(s string) { content = append(content, map[string]any{"type": "text", "text": s}) }
+	addImages := func(images []Attachment) error {
+		for _, image := range images {
+			if _, err := imageDataURL(image); err != nil {
+				return err
+			}
+
+			content = append(content, map[string]any{"type": "image", "source": map[string]any{
+				"type": "base64", "media_type": image.MIME, "data": image.Data,
+			}})
+		}
+		return nil
+	}
+	if in.Cursor == "" && len(in.History) > 0 {
+		addText("Previous conversation (context only):")
+		for _, h := range in.History {
+			addText(h.Role + ": " + h.Text)
+			if err := addImages(h.Attachments); err != nil {
+				return "", err
+			}
+		}
+		addText("Current user message:")
+	}
+	addText(in.Text)
+	if err := addImages(in.Attachments); err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}})
+	return string(b) + "\n", err
 }

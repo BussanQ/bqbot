@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,8 +14,33 @@ import (
 	"bqbot/internal/driver"
 	"bqbot/internal/harness"
 	"bqbot/internal/mcp"
+	"bqbot/internal/service"
 	"bqbot/internal/store"
 )
+
+var testStores sync.Map
+
+func testStore(a *app) *store.Store {
+	st, _ := testStores.Load(a)
+	return st.(*store.Store)
+}
+
+func newTestApp(t *testing.T, st *store.Store, h *harness.Harness, post func(func())) (*app, error) {
+	t.Helper()
+	srv, err := service.Listen(h, "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	a, err := newApp(service.NewClient(srv.URL, srv.Token), post)
+	if err != nil {
+		srv.Close()
+		return nil, err
+	}
+	testStores.Store(a, st)
+	a.connect()
+	t.Cleanup(func() { a.cancel(); srv.Close(); h.Close(); testStores.Delete(a) })
+	return a, nil
+}
 
 // testApp's harness posts to a channel that the test drains on the "main
 // thread", as Window.Update would.
@@ -23,9 +49,9 @@ func testApp(t *testing.T) (*app, chan func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := harness.New(st, &driver.Echo{})
+	h := harness.New(st, &driver.Echo{}, &driver.Claude{})
 	posts := make(chan func(), 1024)
-	a, err := newApp(st, h, func(fn func()) { posts <- fn })
+	a, err := newTestApp(t, st, h, func(fn func()) { posts <- fn })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +113,7 @@ func TestCreateChatDelete(t *testing.T) {
 	}
 
 	// The conversation survives a restart.
-	b, _ := newApp(a.st, harness.New(a.st, &driver.Echo{}), func(func()) {})
+	b, _ := newTestApp(t, testStore(a), harness.New(testStore(a), &driver.Echo{}), func(func()) {})
 	tt2 := ui.NewTester(b.view, 1000, 700)
 	if !tt2.HasText("hi there") || !tt2.HasText("Echo: hi there") {
 		t.Errorf("after reopening, texts %q", tt2.Texts())
@@ -150,7 +176,7 @@ func TestHandoffInChat(t *testing.T) {
 	st.SaveBot(ada)
 	st.SaveBot(bo)
 	posts := make(chan func(), 1024)
-	a, err := newApp(st, h, func(fn func()) { posts <- fn })
+	a, err := newTestApp(t, st, h, func(fn func()) { posts <- fn })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +203,7 @@ func TestHandoffInChat(t *testing.T) {
 func TestAnsweringLine(t *testing.T) {
 	a, _ := testApp(t)
 	b := store.Bot{ID: store.NewID(), Name: "Bo", Engine: "echo"}
-	a.st.SaveBot(b)
+	testStore(a).SaveBot(b)
 	a.bots, a.selected = []store.Bot{b}, b.ID
 	tt := ui.NewTester(a.view, 1000, 700)
 	a.fold(harness.Update{BotID: b.ID, Busy: true, Answering: "Ada"})
@@ -195,7 +221,7 @@ func TestAnsweringLine(t *testing.T) {
 func TestEditBot(t *testing.T) {
 	a, _ := testApp(t)
 	b := store.Bot{ID: store.NewID(), Name: "Ada", Engine: "echo", Cursor: "c1"}
-	a.st.SaveBot(b)
+	testStore(a).SaveBot(b)
 	a.bots, a.selected = []store.Bot{b}, b.ID
 	tt := ui.NewTester(a.view, 1000, 700)
 	if err := tt.Click("Edit bot"); err != nil {
@@ -208,7 +234,7 @@ func TestEditBot(t *testing.T) {
 	if err := tt.Click("Save"); err != nil {
 		t.Fatal(err)
 	}
-	bots, _ := a.st.Bots()
+	bots, _ := testStore(a).Bots()
 	if len(bots) != 1 || bots[0].Name != "Ada Lovelace" || bots[0].Persona != "Be brief." || bots[0].Cursor != "c1" {
 		t.Errorf("bots %+v", bots)
 	}
@@ -219,7 +245,7 @@ func TestEditBot(t *testing.T) {
 	a.openEdit(bots[0])
 	a.newModel = "m2"
 	a.saveForm()
-	if bots, _ = a.st.Bots(); bots[0].Cursor != "" || bots[0].Model != "m2" {
+	if bots, _ = testStore(a).Bots(); bots[0].Cursor != "" || bots[0].Model != "m2" {
 		t.Errorf("after the model changed: %+v", bots[0])
 	}
 }
@@ -229,8 +255,8 @@ func TestUnreadBadge(t *testing.T) {
 	a, _ := testApp(t)
 	ada := store.Bot{ID: store.NewID(), Name: "Ada", Engine: "echo"}
 	bo := store.Bot{ID: store.NewID(), Name: "Bo", Engine: "echo"}
-	a.st.SaveBot(ada)
-	a.st.SaveBot(bo)
+	testStore(a).SaveBot(ada)
+	testStore(a).SaveBot(bo)
 	a.bots, a.selected = []store.Bot{ada, bo}, ada.ID
 	tt := ui.NewTester(a.view, 1000, 700)
 	a.fold(harness.Update{BotID: bo.ID, Done: true, Reply: &store.Message{ID: "r1", Role: "assistant", Text: "hi"}})
@@ -249,8 +275,8 @@ func TestUnreadBadge(t *testing.T) {
 func TestToolsFoldAndCopy(t *testing.T) {
 	a, _ := testApp(t)
 	b := store.Bot{ID: store.NewID(), Name: "Ada", Engine: "echo"}
-	a.st.SaveBot(b)
-	a.st.Append(b.ID, store.Message{ID: "m1", Role: "assistant", Text: "done it", Tools: []string{"已转交给 Bo", "Bash ls", "Read go.mod"}})
+	testStore(a).SaveBot(b)
+	testStore(a).Append(b.ID, store.Message{ID: "m1", Role: "assistant", Text: "done it", Tools: []string{"已转交给 Bo", "Bash ls", "Read go.mod"}})
 	a.bots, a.selected = []store.Bot{b}, b.ID
 	tt := ui.NewTester(a.view, 1000, 700)
 	if !tt.HasText("已转交给 Bo") || !tt.HasText("Ran 2 tools") || tt.HasText("Bash ls") {
@@ -275,10 +301,10 @@ func TestSessionsView(t *testing.T) {
 	a, _ := testApp(t)
 	ada := store.Bot{ID: store.NewID(), Name: "Ada", Engine: "echo"}
 	bo := store.Bot{ID: store.NewID(), Name: "Bo", Engine: "echo"}
-	a.st.SaveBot(ada)
-	a.st.SaveBot(bo)
-	a.st.AppendHandoff(bo.ID, ada.ID, store.Message{ID: "h1", Role: "user", Text: "what is 2+2?", From: "Ada"})
-	a.st.AppendHandoff(bo.ID, ada.ID, store.Message{ID: "h2", Role: "assistant", Text: "four"})
+	testStore(a).SaveBot(ada)
+	testStore(a).SaveBot(bo)
+	testStore(a).AppendHandoff(bo.ID, ada.ID, store.Message{ID: "h1", Role: "user", Text: "what is 2+2?", From: "Ada"})
+	testStore(a).AppendHandoff(bo.ID, ada.ID, store.Message{ID: "h2", Role: "assistant", Text: "four"})
 	a.bots, a.selected = []store.Bot{ada, bo}, bo.ID
 	tt := ui.NewTester(a.view, 1000, 700)
 	if err := tt.Click("Handoff sessions"); err != nil {

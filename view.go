@@ -13,21 +13,28 @@ import (
 
 	"bqbot/internal/driver"
 	"bqbot/internal/harness"
+	"bqbot/internal/service"
 	"bqbot/internal/store"
 )
 
 // thread is what the window shows of one bot's conversation.
 type thread struct {
-	loaded bool
-	msgs   []store.Message
-	live   *store.Message // the reply streaming in
-	busy   bool
+	loaded          bool
+	msgs            []store.Message
+	pendingMessages []store.Message
+	live            *store.Message // the reply streaming in
+	busy            bool
 	// answering is the bot whose question the busy bot answers, in its own
 	// session with that bot.
-	answering string
-	draft     string
-	list      ui.ListState
-	unread    int // replies that came while another bot was shown
+	queued      int
+	sequence    uint64
+	attachments []driver.Attachment
+	approvals   map[string]*approvalCard
+	sendMode    string
+	answering   string
+	draft       string
+	list        ui.ListState
+	unread      int // replies that came while another bot was shown
 }
 
 // session is a handoff session to look at: one bot's questions to another
@@ -41,8 +48,20 @@ type session struct {
 // app is the window's state. The view and every method run on the main
 // thread; other goroutines change it through post.
 type app struct {
-	st *store.Store
-	h  *harness.Harness
+	api     *service.Client
+	cancel  context.CancelFunc
+	catalog []service.Engine
+	images  map[string]*ui.Bitmap
+
+	settingsOpen   bool
+	settings       map[string]driver.EngineSettings
+	settingsEngine string
+	settingsPath   string
+	settingsURL    string
+	settingsKeyEnv string
+	settingsModels string
+	settingsError  string
+	optionsError   string
 	// post runs fn on the main thread and redraws: Window.Update.
 	post func(fn func())
 
@@ -55,12 +74,15 @@ type app struct {
 	split    float32
 	status   string
 
-	creating   bool
-	newName    string
-	newEngine  string
-	newModel   string
-	newPersona string
-	formErr    string
+	creating    bool
+	newName     string
+	newEngine   string
+	newModel    string
+	newPersona  string
+	modelPick   string
+	optionsOpen bool
+	optionBot   store.Bot
+	formErr     string
 
 	deleting bool
 
@@ -76,36 +98,60 @@ type app struct {
 	toolsOpen map[string]*bool // by message ID, whether its tool lines show
 }
 
-func newApp(st *store.Store, h *harness.Harness, post func(func())) (*app, error) {
-	bots, err := st.Bots()
+func newApp(api *service.Client, post func(func())) (*app, error) {
+	bots, err := api.Bots()
 	if err != nil {
 		return nil, err
 	}
-	a := &app{st: st, h: h, post: post, bots: bots, threads: map[string]*thread{}, split: 260, toolsOpen: map[string]*bool{}, engines: []string{"echo"}}
+	a := &app{api: api, post: post, bots: bots, threads: map[string]*thread{}, split: 260, toolsOpen: map[string]*bool{}, engines: []string{"echo"}, images: map[string]*ui.Bitmap{}}
 	if len(bots) > 0 {
 		a.selected = bots[0].ID
 	}
-	h.OnUpdate = func(u harness.Update) { a.post(func() { a.fold(u) }) }
 	return a, nil
 }
 
-// probeEngines looks for the agent CLIs in the background.
-func (a *app) probeEngines() {
-	for name, d := range a.h.Drivers {
-		if d.Binary() == "" {
-			continue
-		}
-		go func() {
-			if _, err := driver.Probe(context.Background(), d.Binary()); err == nil {
-				a.post(func() {
-					if !slices.Contains(a.engines, name) {
-						a.engines = append(a.engines, name)
-						slices.Sort(a.engines)
-					}
-				})
+// connect streams service events after the window is ready to receive updates.
+func (a *app) connect() {
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancel = cancel
+	go func() {
+		for ctx.Err() == nil {
+			err := a.api.Watch(ctx, func(u harness.Update) {
+				a.post(func() { a.fold(u) })
+			})
+			if ctx.Err() != nil {
+				return
 			}
-		}()
-	}
+			if err != nil {
+				a.post(func() { a.status = "Connection interrupted: " + err.Error() })
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+		}
+	}()
+}
+
+// probeEngines asks the service for availability and its model catalog.
+func (a *app) probeEngines() {
+	go func() {
+		engines, err := a.api.Engines()
+		a.post(func() {
+			if err != nil {
+				a.status = err.Error()
+				return
+			}
+			a.catalog, a.engines = engines, nil
+			for _, e := range engines {
+				if e.Available {
+					a.engines = append(a.engines, e.Name)
+				}
+			}
+			slices.Sort(a.engines)
+		})
+	}()
 }
 
 func (a *app) thread(id string) *thread {
@@ -118,12 +164,12 @@ func (a *app) thread(id string) *thread {
 	}
 	if !t.loaded {
 		t.loaded = true
-		msgs, err := a.st.Transcript(id)
+		msgs, err := a.api.Transcript(id)
 		if err != nil {
 			a.status = err.Error()
 		}
 		t.msgs = msgs
-		t.busy = a.h.Busy(id)
+		// Busy and approval state arrive through the service's SSE snapshot.
 	}
 	return t
 }
@@ -139,9 +185,69 @@ func (a *app) bot(id string) (store.Bot, bool) {
 
 // fold applies a harness update.
 func (a *app) fold(u harness.Update) {
+	if u.Bot != nil {
+		if i := slices.IndexFunc(a.bots, func(b store.Bot) bool { return b.ID == u.BotID }); i >= 0 {
+			a.bots[i] = *u.Bot
+		} else {
+			a.bots = append(a.bots, *u.Bot)
+		}
+	}
+	if _, ok := a.bot(u.BotID); !ok {
+		if bots, err := a.api.Bots(); err == nil {
+			a.bots = bots
+		}
+		if _, ok := a.bot(u.BotID); !ok {
+			return
+		}
+	}
 	t := a.thread(u.BotID)
+	if u.Sync {
+		if u.Sequence < t.sequence {
+			return
+		}
+		t.sequence = u.Sequence
+		t.pendingMessages = u.QueuedMessages
+		t.msgs, t.live, t.busy, t.answering, t.queued = u.Messages, u.Reply, u.Busy, u.Answering, u.Queued
+		t.approvals = map[string]*approvalCard{}
+		for _, req := range u.Approvals {
+			t.approvals[req.ID] = &approvalCard{request: req}
+		}
+		return
+	}
+	if u.Sequence > 0 && u.Sequence <= t.sequence {
+		return
+	}
+	if u.Sequence > 0 {
+		t.sequence = u.Sequence
+	}
+	if u.QueuedUser != nil && !slices.ContainsFunc(t.pendingMessages, func(m store.Message) bool { return m.ID == u.QueuedUser.ID }) {
+		t.pendingMessages = append(t.pendingMessages, *u.QueuedUser)
+	}
+	if u.User != nil {
+		t.pendingMessages = slices.DeleteFunc(t.pendingMessages, func(m store.Message) bool { return m.ID == u.User.ID })
+		t.add(*u.User)
+	}
+	t.queued = u.Queued
+	if t.queued == 0 {
+		t.pendingMessages = nil
+	}
+	if u.Approval != nil {
+		if t.approvals == nil {
+			t.approvals = map[string]*approvalCard{}
+		}
+		if t.approvals[u.Approval.ID] == nil {
+			t.approvals[u.Approval.ID] = &approvalCard{request: *u.Approval}
+		}
+	}
+	if u.ResolvedApproval != "" {
+		delete(t.approvals, u.ResolvedApproval)
+	}
+	if u.Error != "" {
+		a.status = u.Error
+	}
 	if u.Done {
-		t.busy, t.live, t.answering = false, nil, ""
+		clear(t.approvals)
+		t.busy, t.live, t.answering = u.Busy, nil, ""
 		if u.Reply != nil && (u.Reply.Text != "" || len(u.Reply.Tools) > 0) {
 			t.add(*u.Reply)
 			if u.BotID != a.selected {
@@ -152,36 +258,52 @@ func (a *app) fold(u harness.Update) {
 			a.status = u.Err.Error()
 		}
 		// The harness saved the session cursor; pick it up.
-		if bots, err := a.st.Bots(); err == nil {
+		if bots, err := a.api.Bots(); err == nil {
 			a.bots = bots
 		}
 		return
 	}
 	t.busy = u.Busy
-	t.live = u.Reply
+	if u.Reply != nil {
+		t.live = u.Reply
+	}
 	t.answering = u.Answering
 }
 
 // add appends m unless the thread has it: a thread loaded after the
 // harness wrote m to the transcript already read it.
 func (t *thread) add(m store.Message) {
-	if !slices.ContainsFunc(t.msgs, func(o store.Message) bool { return o.ID == m.ID }) {
+	if i := slices.IndexFunc(t.msgs, func(o store.Message) bool { return o.ID == m.ID }); i >= 0 {
+		t.msgs[i] = m
+	} else {
 		t.msgs = append(t.msgs, m)
 	}
 }
 
 func (a *app) send(b store.Bot, t *thread, text string) bool {
-	if strings.TrimSpace(text) == "" || t.busy {
+	if strings.TrimSpace(text) == "" && len(t.attachments) == 0 {
 		return false
 	}
-	m, err := a.h.Send(b, text)
+	mode := t.sendMode
+	if mode == "" {
+		mode = "queue"
+	}
+	m, err := a.api.Send(b.ID, text, t.attachments, mode)
 	if err != nil {
 		a.status = err.Error()
 		return false
 	}
 	a.status = ""
-	t.msgs = append(t.msgs, m)
+	t.pendingMessages = append(t.pendingMessages, m)
+	t.attachments = nil
 	t.busy = true
+	// Establish a sequence after admission so an earlier connection snapshot
+	// cannot replace this optimistic message while SSE callbacks are queued.
+	if updates, err := a.api.Snapshot(); err == nil {
+		for _, u := range updates {
+			a.fold(u)
+		}
+	}
 	return true
 }
 
@@ -221,7 +343,7 @@ func (a *app) saveForm() bool {
 		}
 	}
 	b.Name, b.Engine, b.Model, b.Persona = name, a.newEngine, strings.TrimSpace(a.newModel), strings.TrimSpace(a.newPersona)
-	if err := a.st.SaveBot(b); err != nil {
+	if err := a.api.SaveBot(b); err != nil {
 		a.formErr = err.Error()
 		return false
 	}
@@ -259,10 +381,10 @@ func (a *app) openSessions(b store.Bot) {
 		if o.ID == b.ID {
 			continue
 		}
-		if msgs, err := a.st.HandoffTranscript(b.ID, o.ID); err == nil && len(msgs) > 0 {
+		if msgs, err := a.api.HandoffTranscript(b.ID, o.ID); err == nil && len(msgs) > 0 {
 			a.sessions = append(a.sessions, session{label: o.Name + " → " + b.Name, answer: b.Name, msgs: msgs})
 		}
-		if msgs, err := a.st.HandoffTranscript(o.ID, b.ID); err == nil && len(msgs) > 0 {
+		if msgs, err := a.api.HandoffTranscript(o.ID, b.ID); err == nil && len(msgs) > 0 {
 			a.sessions = append(a.sessions, session{label: b.Name + " → " + o.Name, answer: o.Name, msgs: msgs})
 		}
 	}
@@ -274,7 +396,7 @@ func (a *app) openSessions(b store.Bot) {
 }
 
 func (a *app) openFolder(c *ui.Context, b store.Bot) {
-	dir, err := a.st.WorkDir(b.ID)
+	dir, err := a.api.WorkDir(b.ID)
 	if err != nil {
 		a.status = err.Error()
 		return
@@ -283,8 +405,7 @@ func (a *app) openFolder(c *ui.Context, b store.Bot) {
 }
 
 func (a *app) deleteBot(id string) {
-	a.h.Stop(id)
-	if err := a.st.DeleteBot(id); err != nil {
+	if err := a.api.DeleteBot(id); err != nil {
 		a.status = err.Error()
 		return
 	}
@@ -314,12 +435,12 @@ func (a *app) view(c *ui.Context) {
 		c.Root().Background(ui.Transparent)
 	}
 
-	modal := a.creating || a.deleting || a.viewingSessions
+	modal := a.creating || a.deleting || a.viewingSessions || a.settingsOpen || a.optionsOpen
 	if !modal && c.Shortcut(ui.Cmd, ui.KeyN) {
 		a.openCreate()
 	}
 	if b, ok := a.bot(a.selected); ok && !modal && c.Shortcut(ui.Cmd, ui.KeyPeriod) {
-		a.h.Stop(b.ID)
+		a.stop(b.ID)
 	}
 	ui.Split(c, &a.split, func() {
 		side := ui.Column(c).Fill()
@@ -331,6 +452,8 @@ func (a *app) view(c *ui.Context) {
 		ui.Box(c).Fill().Background(a.pal.bg).Children(func() { a.chat(c) })
 	}).Fill()
 
+	ui.Modal(c, &a.optionsOpen, func() { a.optionsView(c) })
+	ui.Modal(c, &a.settingsOpen, func() { a.settingsView(c) })
 	ui.Modal(c, &a.creating, func() { a.botForm(c) })
 	ui.Modal(c, &a.viewingSessions, func() { a.sessionsView(c) })
 	if b, ok := a.bot(a.selected); ok {
@@ -388,7 +511,10 @@ func (a *app) sidebar(c *ui.Context) {
 		}
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Padding(8, 10, 0, 10).Children(func() {
 			ui.Box(c).Size(6, 6).Radius(3).Background(ui.Oklch(0.72, 0.17, 150))
-			ui.Text(c, strings.Join(a.engines, " · ")).FontSize(11.5).TextColor(p.muted).SingleLine()
+			ui.Text(c, strings.Join(a.engines, " · ")).FontSize(11.5).TextColor(p.muted).SingleLine().Grow(1)
+			if a.iconButton(c, toolIcon, "Engine settings", "CLI paths and API settings").Clicked() {
+				a.openSettings()
+			}
 		})
 	})
 }
@@ -512,6 +638,21 @@ func (a *app) chat(c *ui.Context) {
 				}
 			})
 		}
+		if len(t.approvals) > 0 {
+			a.approvalCards(c, b, t)
+		}
+		if t.queued > 0 {
+			ui.Column(c).Gap(3).Padding(4, 24).Children(func() {
+				ui.Text(c, fmt.Sprintf("%d messages queued", t.queued)).FontSize(12).TextColor(p.muted)
+				for _, pending := range t.pendingMessages {
+					text := pending.Text
+					if text == "" {
+						text = "Image attachment"
+					}
+					ui.Text(c, text).FontSize(12).TextColor(p.faint).SingleLine()
+				}
+			})
+		}
 		a.composer(c, b, t)
 	})
 }
@@ -557,6 +698,16 @@ func (a *app) composer(c *ui.Context, b store.Bot, t *thread) {
 	p := a.pal
 	card := ui.Column(c).Gap(6).Margin(4, 24, 18, 24).Padding(12, 10, 10, 16).Radius(16).Background(p.field)
 	card.Children(func() {
+		if len(t.attachments) > 0 {
+			ui.Row(c).Gap(8).Children(func() {
+				for i, image := range t.attachments {
+					if ui.Button(c.Key(image.Name), "× "+image.Name).Label("Remove " + image.Name).Clicked() {
+						t.attachments = slices.Delete(t.attachments, i, i+1)
+						break
+					}
+				}
+			})
+		}
 		in := ui.TextAreaBase(c, &t.draft).Lines(1, 8).Placeholder("Message " + b.Name).Label("Message").FontSize(14).AutoFocus().
 			OnTextKey(func(k ui.TextKey) bool {
 				if k.Key == ui.KeyEnter && k.Mods == 0 {
@@ -573,12 +724,24 @@ func (a *app) composer(c *ui.Context, b store.Bot, t *thread) {
 			card.Border(1, p.hairline).Shadow(0, 4, 16, -4, p.shade)
 		}
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Enter to send · Shift+Enter for a new line").FontSize(11).TextColor(p.faint).Grow(1)
+			if a.iconButton(c, plusIcon, "Attach image", "Attach images").Clicked() {
+				a.pickImages(b.ID)
+			}
+			if ui.Button(c, "Model & permissions").FontSize(11).Clicked() {
+				a.openOptions(b)
+			}
+			ui.Box(c).Grow(1)
 			if t.busy {
-				if a.sendButton(c, stopIcon, "Stop", "Stop (⌘.)", p.text, p.bg, false).Clicked() {
-					a.h.Stop(b.ID)
+				if t.sendMode == "" {
+					t.sendMode = "queue"
 				}
-			} else if empty := strings.TrimSpace(t.draft) == ""; a.sendButton(c, sendIcon, "Send", "Send (Enter)", p.accent, p.onAccent, empty).Clicked() && !empty {
+				ui.Select(c, &t.sendMode, []string{"queue", "steer"}).Label("Send mode").Width(90)
+				if a.sendButton(c, stopIcon, "Stop", "Stop (⌘.)", p.text, p.bg, false).Clicked() {
+					a.stop(b.ID)
+				}
+			}
+			empty := strings.TrimSpace(t.draft) == "" && len(t.attachments) == 0
+			if a.sendButton(c, sendIcon, "Send", "Send (Enter)", p.accent, p.onAccent, empty).Clicked() && !empty {
 				if a.send(b, t, t.draft) {
 					t.draft = ""
 				}
@@ -632,6 +795,12 @@ func (a *app) message(c *ui.Context, b store.Bot, m *store.Message, done bool) {
 	switch m.Role {
 	case "user":
 		ui.Column(c).AlignItems(ui.End).Gap(5).PaddingStart(80).Children(func() {
+			for i, image := range m.Attachments {
+				if bitmap := a.image(m.ID+fmt.Sprint(i), image); bitmap != nil {
+					ui.Image(c, bitmap).MaxWidth(320).MaxHeight(200).Radius(12)
+				}
+				ui.Text(c, image.Name).FontSize(11).TextColor(p.muted)
+			}
 			ui.Text(c, m.Text).FontSize(14).Selectable().Padding(10, 15).Radius(18, 18, 6, 18).
 				Background(p.accent).TextColor(p.onAccent).MaxWidth(560).Shadow(0, 2, 8, -2, p.accent.Alpha(0.35))
 			ui.Text(c, stamp(m.At)).FontSize(11).TextColor(p.faint).PaddingEnd(4)

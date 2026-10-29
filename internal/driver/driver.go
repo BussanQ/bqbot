@@ -39,11 +39,19 @@ type Event struct {
 
 // TurnInput is what a driver needs to run a turn.
 type TurnInput struct {
-	Text   string // the user's message
-	System string // the bot's persona
-	Model  string // "" is the engine's default
-	Cursor string // continuation from a previous EvSession, "" for a new session
-	Dir    string // working directory
+	Text         string // the user's message
+	System       string // the bot's persona
+	Model        string // "" is the engine's default
+	Cursor       string // continuation from a previous EvSession, "" for a new session
+	Dir          string // working directory
+	Effort       string
+	ApprovalMode string // ask, auto-edit, full-auto
+	Approve      ApproveFunc
+	ApprovalMCP  *MCPServer
+	Attachments  []Attachment
+	History      []HistoryMessage
+	Steer        <-chan string
+	Settings     EngineSettings
 	// MCP is the bqbot MCP server to give the turn, nil for none. The
 	// driver opens only that server's tools to the agent.
 	MCP *MCPServer
