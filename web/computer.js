@@ -111,5 +111,14 @@ export function createComputerUI({ bridge, openDialog, field, dialogActions, get
     root.querySelector("form").onsubmit = run(async (e) => { e.preventDefault(); const input = e.target.elements.text; await control({ kind: "type", text: input.value }); input.value = ""; await refresh(); });
     await poll();
   }
-  return { home, shutdown };
+  const providers = { host: "这台电脑", boat: "Boat 云桌面", vm: "VM" };
+  async function summary(botId) {
+    const c = (await call("computers") || []).find((v) => v.bot_id === botId);
+    return c ? `${providers[c.provider] || c.provider} · ${c.enabled ? "已启用" : "已关闭"}` : "尚未配置";
+  }
+  async function configure(botId) {
+    const items = await call("computers") || [];
+    await edit(items.find((v) => v.bot_id === botId) || { bot_id: botId });
+  }
+  return { home, shutdown, summary, configure };
 }

@@ -36,6 +36,15 @@ const paths = {
   pin: "m9 3 9 3-2 6 2 4-6-2-3 3-2-6zM8 16l-5 5",
   archive: "M4 8h16v13H4zM2 3h20v5H2zM9 12h6",
   user: "M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8M4 21v-3a8 5 0 0 1 16 0v3",
+  monitor: "M3 4h18v12H3zM8 20h8M12 16v4",
+  mic: "M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3M5 11a7 7 0 0 0 14 0M12 18v3",
+  users: "M9 4a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7M2 20v-1a6 5 0 0 1 14 0v1M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14a6 5 0 0 1 4 5v1",
+  phone: "M7 2h10v20H7zM11 18h2",
+  refresh: "M20 11a8 8 0 1 0-2 6M20 5v6h-6",
+  tool: "M14 6a4 4 0 0 0 5 5l-9 9a2 2 0 0 1-3-3l9-9a4 4 0 0 1-2-2M15 3l2 2",
+  route: "M6 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4M18 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4M6 7v4a4 4 0 0 0 4 4h4a4 4 0 0 1 4 2",
+  next: "m10 6 6 6-6 6",
+  trash: "M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3",
 };
 const icon = (name) =>
   `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${paths[name] || paths.chat}"/></svg>`;
@@ -422,6 +431,14 @@ function openDialog(title, body, onSubmit) {
     form?.querySelector("input,textarea,select")?.focus(),
   );
 }
+// Settings shortcuts reuse the grouped menu card; attributes are fixed literals.
+const settingsLinks = (items) =>
+  `<section class="menu-group settings-links"><h3>更多设置</h3><div class="menu-items">${items
+    .map(
+      ([attr, name, label, help]) =>
+        `<button type="button" ${attr}>${icon(name)}<span><strong>${label}</strong><small>${help}</small></span>${icon("next")}</button>`,
+    )
+    .join("")}</div></section>`;
 const dialogActions = (label) =>
   `<div class="dialog-actions"><button type="button" class="secondary" data-cancel>取消</button><button type="submit" class="primary">${label}</button></div>`;
 function openBot(b) {
@@ -453,7 +470,7 @@ function openBot(b) {
           ["full-auto", "完全自动"],
         ],
       },
-    )}</div><p class="form-help">逐次询问会在操作前请求确认；自动编辑允许修改文件；完全自动允许工具操作。更改模型会为后续消息建立新会话。</p>${field("角色与工作方式", "persona", original.persona, { textarea: true })}${dialogActions(b ? "保存更改" : "添加伙伴")}</form>`,
+    )}</div><p class="form-help">逐次询问会在操作前请求确认；自动编辑允许修改文件；完全自动允许工具操作。更改模型会为后续消息建立新会话。</p>${field("角色与工作方式", "persona", original.persona, { textarea: true })}${b ? `<section class="menu-group settings-links"><h3>电脑</h3><div class="menu-items"><button type="button" data-bot-computer>${icon("monitor")}<span><strong>伙伴的电脑</strong><small data-computer-status>正在读取…</small></span>${icon("next")}</button></div></section><p class="form-help">配置电脑会离开此页面，未保存的伙伴修改不会保留。</p>` : ""}${dialogActions(b ? "保存更改" : "添加伙伴")}</form>`,
     async (data) => {
       const bot = { ...original, ...Object.fromEntries(data) };
       const engine = state.engines.find((e) => e.name === bot.engine);
@@ -483,6 +500,15 @@ function openBot(b) {
     updateModels();
   };
   updateModels();
+  if (!b) return;
+  const status = form.querySelector("[data-computer-status]");
+  computerUI
+    .summary(b.id)
+    .then((text) => (status.textContent = text))
+    .catch(() => (status.textContent = "无法读取电脑配置"));
+  form.querySelector("[data-bot-computer]").onclick = run(() =>
+    computerUI.configure(b.id),
+  );
 }
 function openThread() {
   const b = currentBot();
@@ -538,7 +564,15 @@ async function openSettings() {
   ].filter((e) => e !== "echo");
   openDialog(
     "引擎设置",
-    `<form>${field("选择引擎", "engine", engines[0], { select: engines })}<div id="engine-settings"></div><p class="form-help">使用环境变量名称配置 API 密钥。密钥本身不会保存在界面中。</p><button type="button" class="secondary" data-routing>配置群聊决策模型</button><button type="button" class="secondary" data-tools-home>工具与自动化</button><button type="button" class="secondary" data-computer-home>伙伴的电脑</button><button type="button" class="secondary" data-voice-home>语音与通话</button><button type="button" class="secondary" data-team-home>团队与分享</button><button type="button" class="secondary" data-remote-home>手机与远程访问</button><button type="button" class="secondary" data-update>检查更新</button>${dialogActions("保存设置")}</form>`,
+    `<form>${field("选择引擎", "engine", engines[0], { select: engines })}<div id="engine-settings"></div><p class="form-help">使用环境变量名称配置 API 密钥。密钥本身不会保存在界面中。</p>${settingsLinks([
+      ["data-routing", "route", "群聊决策模型", "协作空间自动分配时使用的模型"],
+      ["data-tools-home", "tool", "工具与自动化", "MCP 工具、定时任务与触发器"],
+      ["data-computer-home", "monitor", "伙伴的电脑", "本机控制、云桌面与 VM"],
+      ["data-voice-home", "mic", "语音与通话", "听写、朗读和语音通话"],
+      ["data-team-home", "users", "团队与分享", "导入、导出伙伴团队"],
+      ["data-remote-home", "phone", "手机与远程访问", "在其他设备上继续对话"],
+      ["data-update", "refresh", "检查更新", "获取 bqbot 的新版本"],
+    ])}${dialogActions("保存设置")}</form>`,
     async (data) => {
       keep();
       await mutate({ kind: "save-settings", settings });
@@ -640,34 +674,58 @@ function openMenu() {
     r = currentRoom(),
     c = state.conversation;
   if (!c) return;
-  const buttons = r
+  const groups = r
     ? [
-        ["edit", "编辑协作空间"],
-        ["memory", "对话记忆"],
-        ["delete", "删除协作空间"],
+        ["空间", [["edit", "编辑协作空间", "settings"], ["memory", "对话记忆", "memory"]]],
+        ["", [["delete", "删除协作空间", "trash"]]],
       ]
     : [
-        ["edit", "编辑伙伴与模型"],
-        ["new", "新建对话"],
-        ["memory", "对话记忆"],
-        ["pin", b?.pinned ? "取消置顶" : "置顶伙伴"],
-        ["unread", "标记为未读"],
-        ["clone", "复制伙伴"],
-        ["folder", "打开工作目录"],
-        ["cursor", "复制会话 ID"],
-        ["hidden", b?.hidden ? "显示伙伴" : "隐藏伙伴"],
-        ["closed", showClosed ? "收起已关闭对话" : "显示已关闭对话"],
-        ...(c.closed
-          ? []
-          : [
-              ["compact", "压缩当前上下文"],
-              ["close", "关闭当前对话"],
-            ]),
-        ["delete", "删除伙伴"],
+        [
+          "对话",
+          [
+            ["new", "新建对话", "compose"],
+            ["memory", "对话记忆", "memory"],
+            ...(c.closed
+              ? []
+              : [
+                  ["compact", "压缩当前上下文", "archive"],
+                  ["close", "关闭当前对话", "close"],
+                ]),
+            ["closed", showClosed ? "收起已关闭对话" : "显示已关闭对话", "chevron"],
+          ],
+        ],
+        [
+          "伙伴",
+          [
+            ["edit", "编辑伙伴与模型", "settings"],
+            ["pin", b?.pinned ? "取消置顶" : "置顶伙伴", "pin"],
+            ["unread", "标记为未读", "chat"],
+            ["clone", "复制伙伴", "copy"],
+            ["hidden", b?.hidden ? "显示伙伴" : "隐藏伙伴", "user"],
+          ],
+        ],
+        [
+          "本机",
+          [
+            ["folder", "打开工作目录", "folder"],
+            ["cursor", "复制会话 ID", "hash"],
+          ],
+        ],
+        ["", [["delete", "删除伙伴", "trash"]]],
       ];
   openDialog(
     "对话与伙伴",
-    `<div class="menu-list">${buttons.map(([key, label]) => `<button data-menu-action="${key}" class="${key === "delete" ? "danger" : ""}">${label}</button>`).join("")}</div>`,
+    `<div class="menu-list">${groups
+      .map(
+        ([title, items]) =>
+          `<section class="menu-group">${title ? `<h3>${title}</h3>` : ""}<div class="menu-items">${items
+            .map(
+              ([key, label, name]) =>
+                `<button data-menu-action="${key}" class="${key === "delete" ? "danger" : ""}">${icon(name)}<span>${label}</span></button>`,
+            )
+            .join("")}</div></section>`,
+      )
+      .join("")}</div>`,
   );
   $("dialog-body").onclick = run(async (e) => {
     const key = e.target.closest("[data-menu-action]")?.dataset.menuAction;

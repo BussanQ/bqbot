@@ -519,6 +519,23 @@ kbd {
   gap: 5px;
   margin-left: auto;
 }
+.header-actions [data-menu] {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  box-shadow: 0 1px 3px #0000001a;
+  color: var(--text);
+}
+.header-actions [data-menu]:hover {
+  background: var(--soft);
+  border-color: var(--muted);
+}
+.header-actions [data-menu] svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 3.2;
+}
 .message-scroll {
   flex: 1;
   min-height: 0;
@@ -1313,17 +1330,73 @@ select,
 .menu-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 18px;
 }
-.menu-list button {
-  padding: 12px;
-  font-size: 14px;
+.menu-group h3 {
+  margin: 0 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--muted);
+}
+.menu-items {
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  text-align: left;
+  border-radius: 12px;
+  overflow: hidden;
 }
-.menu-list button:hover {
+.menu-items button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  font-size: 14px;
+  text-align: left;
+  color: var(--text);
+}
+.menu-items button + button {
+  border-top: 1px solid var(--line);
+}
+.menu-items button svg {
+  width: 17px;
+  height: 17px;
+  color: var(--muted);
+  flex: none;
+}
+.menu-items button:hover {
   background: var(--soft);
+}
+.menu-items button:hover svg {
+  color: var(--accent);
+}
+.menu-items button.danger svg {
+  color: var(--danger);
+}
+.menu-items button:focus-visible {
+  outline-offset: -2px;
+}
+.settings-links {
+  margin: 18px 0 4px;
+}
+.settings-links button > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+.settings-links strong {
+  font-weight: 500;
+}
+.settings-links small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.settings-links button > svg:last-child {
+  width: 15px;
+  height: 15px;
 }
 @keyframes breathe {
   0%,
