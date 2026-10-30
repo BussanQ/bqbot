@@ -1461,3 +1461,45 @@ select,
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+.tool-sections, .tool-list {
+  display: grid;
+  gap: 14px;
+}
+.tool-section, .tool-item {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.tool-section h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.tool-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tool-item > div:first-child {
+  flex: 1 1 180px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tool-item .form-help {
+  margin: 5px 0 0;
+}
+.tool-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+.connection-state {
+  font-weight: 600;
+}
+.secret-display {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+

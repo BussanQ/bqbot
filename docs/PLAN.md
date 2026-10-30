@@ -44,27 +44,16 @@
 - 默认拒绝（fail-closed）：claude 用 `--permission-mode dontAsk`，codex 用 `sandbox_mode="read-only"`，pi 没有审批机制，只开放 `read,grep,find,ls`，MCP 只开 bqbot 自己的两个工具（见下），否则 `--no-mcp`。审批卡片在阶段 2 做，在那之前不放开写权限。
 - 启动时探测引擎（`--version`），没装的引擎在新建表单里不出现。
 
-### Bot 之间转交（简化版已实现，提前于阶段 4）
-- 内置 stdio MCP 服务：`bqbot mcp <grant 文件>`，提供 `list_bots`、`ask_bot(name, question)`、`list_threads`、`close_thread` 和 `list_room_targets`。它通过 127.0.0.1 随机端口回调正在运行的 app，每轮一个 bearer token。token 写在 0600 的临时 grant 文件里，不进 argv 和引擎配置；轮次结束时 token 作废、文件删除。
-- 只有回答用户的轮次能拿到 bqbot 转交工具；回答另一个 bot 的轮次不给，所以转交深度上限为 1。目标 bot 正忙时，转交请求与用户消息按 FIFO 排队。提问方停止时，排队或执行中的目标任务也会取消。审批服务使用独立的每轮 grant，在转交轮次中同样可用，审批模式继承提问方。
-- 私人聊天的转交使用独立的“目标 × 提问方”线程，可在目标 Bot 下查看。已有 `Bot.Handoffs` 与 `handoffs/<目标>/<提问方>.ndjson` 原位迁移；关闭后再次转交会创建新线程。频道内转交留在本频道，使用频道共享记录和指令。删除任何一方时，对应私人转交线程一起清理。
-- 提问方的聊天显示“已转交给 X”。`ask_bot` 立即返回受理回执；目标完成后，服务自动在原线程或频道唤醒提问方续答。自动续答不能再次派发，显式停止、关闭或删除会取消关联任务。
-- 各引擎只开放 bqbot 自己的 MCP 服务。Claude、Codex、Pi 的工具白名单由同一份 `mcp.Tools` 定义生成；审批使用单独的 grant，管理工具按调用者的私人线程或当前频道限制可见范围。
+### Bot 之间转交与协调（阶段 4 核心实现已落地）
 
-#### 和 OpenMausBot 的差别（后续阶段补齐）
-OpenMausBot 的转交工具是 `coordinate_bots`，配合 `list_bots`、`assignment_status`（见原项目 `server/drivers/agents-catalog-goldens/full.tools-list.json`、`server/runtime-coordinator.ts`）。当前简化版的差别和补齐计划：
+- 内置 stdio MCP 服务：`bqbot mcp <grant 文件>`，提供 `list_bots`、兼容入口 `ask_bot`、`coordinate_bots`、`assignment_status`、`list_threads`、`close_thread` 和 `list_room_targets`。服务通过 127.0.0.1 随机端口回调 app，每轮一个 bearer token；token 写入 `0600` 临时 grant 文件，不进入 argv，轮次结束后失效并删除文件。
+- `coordinate_bots` 每次向 1–4 个不同目标派发任务，按 Bot ID 或唯一名称选择目标。目标正忙时与用户消息共用 FIFO。转交深度上限为 4，禁止转交给自己或祖先；每轮最多派发 8 个任务，同一协调链最多 32 个。
+- 私人转交使用“目标 × 提问方”线程，`thread: "new"` 可创建新线程；频道转交留在当前频道，仅限频道成员。目标完成后默认在原会话自动唤醒提问方，多层结果逐层返回；续答可在链路限制内继续派发。
+- `consult` 沿链继承，只允许审批层认可的读取工具，并禁用外部 MCP；`reply: "none"` 不唤醒发起者；`rework` 沿原线程返工；`done_when` 把验收条件交给目标说明，不自动执行验收。
+- `assignment_status` 查询当前会话可见的任务进度和结果。停止、关闭或删除会取消关联工作；重启后未完成任务标记为 `interrupted`，不会自动重放。
+- 审批模式沿转交链传递，审批 grant 与工具 grant 分离。外部 MCP 通过 bqbot 网关接入，并按 Bot 作用域和每轮审批控制调用。
 
-| 方面 | OpenMausBot | bqbot 当前 | 补齐阶段 |
-|---|---|---|---|
-| 工具 | `coordinate_bots`，一次 1 到 4 个 bot，按 ID 或唯一名字 | `ask_bot`，一次 1 个，按名字 | 阶段 4 |
-| 等待方式 | 提问方发完就结束本轮，结果回来时自动唤醒它继续 | 返回受理回执，结果到达后自动在原会话续答 | 阶段 3 已实现 |
-| 目标正忙 | 排在目标已有工作之后 | 与用户消息共用 FIFO；支持取消和循环等待检测 | 阶段 2 已实现；阶段 4 扩展协调模式 |
-| 作答位置 | 每个提问方一个常驻工作线程，`thread: "new"` 可开新线程，在侧栏显示为目标下的一行 | 私人转交支持可查看线程、`thread: "new"`、`list_threads` / `close_thread`；频道转交留在本频道 | 阶段 3 已实现 |
-| 深度 | 上限 4 层，禁止回头问派活给自己的人或更上层 | 上限 1 层 | 阶段 4 |
-| 模式 | `consult`（只回答，不动手）、`reply: "none"`（单向通知）、`rework`（要求返工）、`done_when` | 只有问答 | 阶段 4 |
-| 状态查询 | `assignment_status` 只读查询进度和结果 | 没有 | 阶段 4 |
-| 权限 | Chief of Staff 的审批级别沿转交链向下传递 | 单层转交继承提问方的审批模式 | 阶段 2 已实现；多层链在阶段 4 |
-| 房间 | `list_room_targets`，在房间里默认发到本房间 | 频道成员发现及频道内转交 | 阶段 3 已实现 |
+当前行为、使用示例和验证边界见 [阶段 4 说明](PHASE4.md)。阶段 1–3 的单层转交限制属于历史设计。
 
 ### 阶段 2：Harness 服务与审批（已实现）
 
@@ -87,11 +76,18 @@ OpenMausBot 的转交工具是 `coordinate_bots`，配合 `list_bots`、`assignm
 - [x] 会话记忆管理与本地召回、保留原文的手动上下文压缩、transcript 全文搜索与跳转。
 - [x] 多个独立线程及侧栏列表；旧转交会话原位迁移；异步转交完成后自动唤醒提问方，支持新线程与关闭、取消。
 
-### 阶段 4：工具与自动化
-- 自定义 MCP 服务器配置（stdio / http / sse）。
-- Composio 连接应用：密钥存系统钥匙串（`mygo` secrets），UI 只拿到“已配置”标记。
-- agents MCP 扩展：按上面的差别表，把 `ask_bot` 升级为 `coordinate_bots`，加入 `assignment_status`、深度 4、consult / 单向通知 / 返工；list_bots / ask_bot 简化版已实现。
-- 触发器：一次性、按工作日、按间隔的日程（上一轮没跑完就跳过）；webhook 接收器（127.0.0.1:8800，只开放 `/health` 和 `/hooks/...`，bearer 鉴权）；运行历史。
+### 阶段 4：工具与自动化（核心实现已落地，尚未完成整体验收）
+
+使用方式、接口、持久化与限制见 [阶段 4 说明](PHASE4.md)。以下勾选表示已有代码实现，不代表全部场景已通过验收。
+
+- [x] 自定义 MCP 服务器配置（stdio / HTTP / SSE）、Bot 作用域、每轮工具发现与审批网关。
+- [x] Composio：通过 `mygo` secrets 保存 API 密钥、创建授权链接、查看连接状态，并接入 MCP；状态接口不回传密钥。
+- [x] agents MCP：保留 `ask_bot`，新增 `coordinate_bots` 和 `assignment_status`，支持四层协调、consult、单向通知、返工及验收条件。
+- [x] 自动化：一次性、工作日、间隔和 webhook 触发；上一轮及关联协调链未结束时跳过重叠触发，持久化运行历史和重启中断状态。
+- [x] Webhook 接收器：127.0.0.1:8800，仅开放 `/health` 和 `/hooks/{id}`，使用独立 bearer 密钥，支持开启、关闭和轮换。
+- [x] WebView 设置入口：MCP、Composio、自动任务、运行历史与 webhook 管理。
+- [ ] 整合后的回归、实际 WebView 交互和浅深色视觉验收尚未完成；按当前要求不继续测试。
+- [ ] 真实 Composio 授权、系统钥匙串及外部引擎端到端行为尚未完成实测。
 
 ### 阶段 5：Bot 的电脑
 - 电脑面板：云桌面（Boat API）带实时截图预览，本地 VM，宿主机控制（Cua Driver，需要显式开启）。截图折叠进 transcript。

@@ -1,4 +1,5 @@
 import { escapeHTML as esc, markdown } from "./markdown.js";
+import { createToolsUI } from "./phase4.js";
 
 const paths = {
   plus: "M12 5v14M5 12h14",
@@ -517,7 +518,7 @@ async function openSettings() {
   ].filter((e) => e !== "echo");
   openDialog(
     "引擎设置",
-    `<form>${field("选择引擎", "engine", engines[0], { select: engines })}<div id="engine-settings"></div><p class="form-help">使用环境变量名称配置 API 密钥。密钥本身不会保存在界面中。</p><button type="button" class="secondary" data-routing>配置群聊决策模型</button>${dialogActions("保存设置")}</form>`,
+    `<form>${field("选择引擎", "engine", engines[0], { select: engines })}<div id="engine-settings"></div><p class="form-help">使用环境变量名称配置 API 密钥。密钥本身不会保存在界面中。</p><button type="button" class="secondary" data-routing>配置群聊决策模型</button><button type="button" class="secondary" data-tools-home>工具与自动化</button>${dialogActions("保存设置")}</form>`,
     async (data) => {
       keep();
       await mutate({ kind: "save-settings", settings });
@@ -857,6 +858,7 @@ $("details").onclick = () => {
   detailsOpen = !detailsOpen;
   renderInspector();
 };
+const toolsUI = createToolsUI({ bridge, openDialog, field, dialogActions, getBots: () => state.bots || [], notify, run });
 $("settings").onclick = run(openSettings);
 $("search").onclick = openSearch;
 $("show-hidden").onclick = run(async () => {
@@ -873,6 +875,7 @@ $("dialog").addEventListener("close", () => {
 $("dialog").addEventListener("click", (e) => {
   if (e.target.closest("[data-cancel]")) $("dialog").close();
   if (e.target.closest("[data-routing]")) openRouting().catch(showError);
+  if (e.target.closest("[data-tools-home]")) toolsUI.home().catch(showError);
 });
 $("welcome").onclick = (e) => {
   const el = e.target.closest("[data-prompt]");

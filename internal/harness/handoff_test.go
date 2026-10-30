@@ -25,11 +25,11 @@ func (d *asker) Name() string   { return "asker" }
 func (d *asker) Binary() string { return "" }
 
 func (d *asker) Run(ctx context.Context, in driver.TurnInput, emit func(driver.Event)) error {
+	if strings.HasPrefix(in.Text, "Handoff completed") || strings.HasPrefix(in.Text, "Handoff to ") {
+		emit(driver.Event{Kind: driver.EvText, Text: "resumed: " + in.Text})
+		return nil
+	}
 	if in.MCP == nil {
-		if strings.HasPrefix(in.Text, "Handoff completed") || strings.HasPrefix(in.Text, "Handoff to ") {
-			emit(driver.Event{Kind: driver.EvText, Text: "resumed: " + in.Text})
-			return nil
-		}
 		emit(driver.Event{Kind: driver.EvText, Text: "no bqbot tools"})
 		return nil
 	}
@@ -45,7 +45,11 @@ func (d *asker) Run(ctx context.Context, in driver.TurnInput, emit func(driver.E
 		d.grants <- g
 	}
 	c := &mcp.HTTPBackend{URL: g.URL, Token: g.Token}
-	f := strings.Fields(in.Text)
+	text := in.Text
+	if strings.Contains(text, "another of the person's bots, asks you this") {
+		_, text, _ = strings.Cut(text, "\n\n")
+	}
+	f := strings.Fields(text)
 	if len(f) < 3 || f[0] != "ask" {
 		emit(driver.Event{Kind: driver.EvText, Text: "ok"})
 		return nil
@@ -215,7 +219,7 @@ func (d *cursorEcho) Run(_ context.Context, in driver.TurnInput, emit func(drive
 	return nil
 }
 
-func TestAskDepthLimit(t *testing.T) {
+func TestAskAncestorRejected(t *testing.T) {
 	r := newRig(t, &asker{})
 	ada := r.bot("Ada", "asker", "")
 	bo := r.bot("Bo", "asker", "")
@@ -223,11 +227,11 @@ func TestAskDepthLimit(t *testing.T) {
 	waitJobs(t, r.h)
 	thread, _ := r.st.HandoffThread(bo.ID, ada.ID)
 	hand, _ := r.st.ThreadTranscript(thread.ID)
-	if len(hand) != 2 || hand[1].Text != "no bqbot tools" {
+	if len(hand) != 2 || !strings.Contains(hand[1].Text, "ancestor") {
 		t.Fatalf("depth limit: %+v", hand)
 	}
 	main, _ := r.st.Transcript(ada.ID)
-	if len(main) != 4 || !strings.Contains(main[3].Text, "no bqbot tools") {
+	if len(main) != 4 || !strings.Contains(main[3].Text, "ancestor") {
 		t.Fatalf("wake: %+v", main)
 	}
 }
@@ -255,7 +259,7 @@ func TestAskBusyAndUnknown(t *testing.T) {
 		t.Errorf("unknown: %q", u.Reply.Text)
 	}
 	r.h.Send(ada, "ask ada anything")
-	if u := r.wait(ada.ID); u.Reply.Text != "failed: you cannot ask yourself" {
+	if u := r.wait(ada.ID); !strings.Contains(u.Reply.Text, "cannot delegate to yourself") {
 		t.Errorf("self: %q", u.Reply.Text)
 	}
 }

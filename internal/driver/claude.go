@@ -58,7 +58,7 @@ func (d *Claude) Args(in TurnInput) []string {
 		servers[name] = map[string]any{"type": "stdio", "command": server.Command, "args": server.Args}
 	}
 	if in.MCP != nil {
-		allowed = append(allowed, mcpToolNames()...)
+		allowed = append(allowed, mcpToolNames(in.MCP)...)
 	}
 	if in.ApprovalMCP != nil {
 		allowed = append(allowed, mcp.ApprovalToolName)
@@ -73,9 +73,15 @@ func (d *Claude) Args(in TurnInput) []string {
 }
 
 // mcpToolNames are the bqbot tools as Claude Code and pi name them.
-func mcpToolNames() []string {
-	names := make([]string, len(mcp.Tools))
-	for i, t := range mcp.Tools {
+func mcpToolNames(servers ...*MCPServer) []string {
+	tools := append([]string{}, mcp.Tools...)
+	for _, server := range servers {
+		if server != nil {
+			tools = append(tools, server.Tools...)
+		}
+	}
+	names := make([]string, len(tools))
+	for i, t := range tools {
 		names[i] = mcp.ToolPrefix + t
 	}
 	return names

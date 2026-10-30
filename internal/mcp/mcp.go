@@ -177,7 +177,12 @@ func Serve(ctx context.Context, r io.Reader, w io.Writer, b Backend) error {
 		case "ping":
 			reply(response{ID: req.ID, Result: map[string]any{}})
 		case "tools/list":
-			reply(response{ID: req.ID, Result: backendTools(b)})
+			tools, err := listTools(ctx, b)
+			if err != nil {
+				reply(response{ID: req.ID, Error: &rpcError{-32603, "tool discovery failed"}})
+			} else {
+				reply(response{ID: req.ID, Result: tools})
+			}
 		case "tools/call":
 			callCtx, cancel := context.WithCancel(ctx)
 			key := string(req.ID)
@@ -204,6 +209,12 @@ func Serve(ctx context.Context, r io.Reader, w io.Writer, b Backend) error {
 func call(ctx context.Context, b Backend, params json.RawMessage) map[string]any {
 	if approvalRestricted(b) {
 		return callApproval(ctx, b, params)
+	}
+	if result, ok := coordinationCall(ctx, b, params); ok {
+		return result
+	}
+	if result, ok := callExternal(ctx, b, params); ok {
+		return result
 	}
 	var p struct {
 		Name      string `json:"name"`

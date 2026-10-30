@@ -61,6 +61,8 @@ type TurnInput struct {
 type MCPServer struct {
 	Command string
 	Args    []string
+	// Tools adds the turn's discovered external tool names to the built-in list.
+	Tools []string
 }
 
 // Driver runs turns on one engine.

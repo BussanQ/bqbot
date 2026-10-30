@@ -35,7 +35,7 @@ func (d *Codex) Args(in TurnInput) []string {
 		args = append(args,
 			"-c", key+"command="+tomlValue(s.Command),
 			"-c", key+"args="+tomlValue(s.Args),
-			"-c", key+"enabled_tools="+tomlValue(mcp.Tools),
+			"-c", key+"enabled_tools="+tomlValue(append(append([]string{}, mcp.Tools...), s.Tools...)),
 			"-c", key+`default_tools_approval_mode="approve"`,
 			"-c", fmt.Sprintf("%stool_timeout_sec=%d", key, int(mcp.ToolTimeout.Seconds())))
 	}

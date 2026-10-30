@@ -7,8 +7,10 @@
 - `web/index.html`：页面骨架、语义标签和内容安全策略。
 - `web/style.css`：浅色 / 深色主题、布局、窄窗口适配和减少动画偏好。
 - `web/app.js`：会话导航、消息渲染、草稿、图片、审批和管理表单。
+- `web/phase4.js`：MCP、Composio、自动任务、运行历史与 webhook 设置表单。
 - `web/markdown.js`：轻量 Markdown 子集，支持标题、列表、引用、表格、代码块和 HTTP(S) 链接；原始 HTML 始终转义，不执行消息内容。
 - `webview_app.go`：`Desktop.State`、显式 `Desktop.Action` 命令及文件选择、复制、外部链接操作。
+- `phase4_webview.go`：`Desktop.Phase4` 显式命令，连接工具与自动化管理接口。
 
 页面通过 `mygo.call` 调用 Go，Go 继续使用 `internal/service.Client`。服务 token 不进入网页，也不暴露通用 HTTP 代理。后台 SSE 使用现有 `app.fold` 状态归并逻辑，通过 `desktop:changed` 通知页面读取快照；快照在锁内序列化。浏览器侧合并刷新请求，按消息 ID 更新 DOM。
 
@@ -23,7 +25,21 @@
 - 伙伴、会话、群聊、引擎设置、审批、记忆和搜索继续使用现有服务校验。
 - 图片通过原生文件选择器导入，保留已有数量、类型和大小限制。
 
+## 工具与自动化
+
+从「引擎设置 → 工具与自动化」进入：
+
+- **MCP 工具服务器**：添加、编辑、删除 stdio / HTTP / SSE 服务器，选择可用 Bot；环境变量和请求头填写变量名映射，实际值由 Go 从进程环境读取。
+- **Composio 应用连接**：保存非秘密配置、设置或移除系统凭据存储中的 API 密钥、打开授权链接、查看应用连接状态。密钥保存后不回显，状态只显示是否已配置。
+- **日程与 Webhook**：创建一次性、工作日、间隔或 webhook 任务，手动运行、查看历史、删除任务；另有接收器启停和密钥轮换入口。Webhook 密钥仅在生成时显示并可复制。
+
+这些表单通过独立的 `Desktop.Phase4` 命令调用服务，不复用聊天快照传递密钥。调度、权限和持久化仍由 Go 服务负责。详细参数、接口和限制见 [阶段 4 说明](PHASE4.md)。
+
+阶段 4 表单已接入代码，但实际 WebView 交互及浅深色视觉验收尚未完成；本次文档更新按要求不继续测试。
+
 ## 定向验证
+
+以下是已有验证命令的使用说明，本次未执行。
 
 ```sh
 go test . -run 'TestDesktop|TestWebFrontend' -count=1

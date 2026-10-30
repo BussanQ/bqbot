@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"bqbot/internal/composio"
 	"bqbot/internal/driver"
 	"bqbot/internal/harness"
 	"bqbot/internal/store"
@@ -27,14 +28,19 @@ const DefaultAddr = "127.0.0.1:8799"
 // Server owns an HTTP listener, but does not own or stop the harness.
 // Token is a credential: callers must never log it or put it in argv.
 type Server struct {
-	URL       string
-	Token     string
-	h         *harness.Harness
-	http      *http.Server
-	key       [32]byte
-	mu        sync.Mutex
-	closed    bool
-	discovery map[string]discoveryFile
+	URL          string
+	Token        string
+	h            *harness.Harness
+	http         *http.Server
+	key          [32]byte
+	mu           sync.Mutex
+	closed       bool
+	discovery    map[string]discoveryFile
+	composio     *composio.Client
+	automation   *harness.Automation
+	webhook      *http.Server
+	webhookURL   string
+	webhookError string
 }
 
 // Engine describes an installed driver and its configured model catalog.
@@ -73,8 +79,24 @@ func Listen(h *harness.Harness, addr string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{URL: "http://" + ln.Addr().String(), Token: hex.EncodeToString(secret[:]), h: h, discovery: make(map[string]discoveryFile)}
+	s := &Server{URL: "http://" + ln.Addr().String(), Token: hex.EncodeToString(secret[:]), h: h, discovery: make(map[string]discoveryFile), composio: composio.New()}
 	s.key = sha256.Sum256([]byte(s.Token))
+	s.automation, err = harness.NewAutomation(h)
+	if err != nil {
+		ln.Close()
+		return nil, err
+	}
+	webhookConfig, err := h.Store.WebhookConfig()
+	if err != nil {
+		s.automation.Close()
+		ln.Close()
+		return nil, err
+	}
+	if webhookConfig.Enabled {
+		if err := s.enableWebhook("127.0.0.1:8800"); err != nil {
+			s.webhookError = err.Error()
+		}
+	}
 	s.http = &http.Server{Handler: s.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	go s.http.Serve(ln)
 	return s, nil
@@ -89,6 +111,13 @@ func (s *Server) Close() error {
 	}
 	s.closed = true
 	err := s.http.Close()
+	if s.webhook != nil {
+		err = errors.Join(err, s.webhook.Close())
+		s.webhook = nil
+	}
+	if s.automation != nil {
+		s.automation.Close()
+	}
 	for path, file := range s.discovery {
 		if e := s.removeDiscovery(path, file); e != nil {
 			err = errors.Join(err, e)
@@ -100,6 +129,9 @@ func (s *Server) Close() error {
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	s.phase3Routes(mux)
+	s.composioRoutes(mux)
+	s.integrationRoutes(mux)
+	s.automationRoutes(mux)
 	mux.HandleFunc("GET /v1/bots", func(w http.ResponseWriter, r *http.Request) { v, e := s.h.Store.Bots(); result(w, v, e) })
 	mux.HandleFunc("PUT /v1/bots", s.saveBot)
 	mux.HandleFunc("DELETE /v1/bots/{bot}", s.withBot(func(w http.ResponseWriter, r *http.Request, b store.Bot) { result(w, struct{}{}, s.h.DeleteBot(b.ID)) }))

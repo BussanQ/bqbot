@@ -41,6 +41,9 @@ type grantTurn struct {
 // the bqbot MCP tools. exe is the bqbot executable, which the engines start
 // as `exe mcp <grant file>`.
 func (h *Harness) Listen(exe string) error {
+	if err := h.Store.RecoverAssignments(); err != nil {
+		return err
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -49,10 +52,14 @@ func (h *Harness) Listen(exe string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /list_bots", hd.serveList)
 	mux.HandleFunc("POST /ask_bot", hd.serveAsk)
+	mux.HandleFunc("POST /coordinate_bots", hd.serveCoordinate)
+	mux.HandleFunc("POST /assignment_status", hd.serveAssignmentStatus)
 	mux.HandleFunc("POST /approve", hd.serveApprove)
 	mux.HandleFunc("POST /list_threads", hd.serveThreads)
 	mux.HandleFunc("POST /close_thread", hd.serveCloseThread)
 	mux.HandleFunc("POST /list_room_targets", hd.serveRoomTargets)
+	mux.HandleFunc("POST /external/list", hd.serveExternalList)
+	mux.HandleFunc("POST /external/call", hd.serveExternalCall)
 	hd.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	h.mu.Lock()
 	if h.closed || h.hand != nil {
@@ -176,7 +183,7 @@ func (hd *handoff) serveList(w http.ResponseWriter, r *http.Request) {
 		if o.ID == from.bot.ID || !hd.allowedTarget(from, o.ID) {
 			continue
 		}
-		b.WriteString("- " + o.Name)
+		b.WriteString("- " + o.Name + " (id: " + o.ID + ")")
 		if hd.h.Busy(o.ID) {
 			b.WriteString(" (busy)")
 		}
@@ -325,6 +332,11 @@ func (h *Harness) botNamed(name string) (store.Bot, error) {
 		return store.Bot{}, err
 	}
 	name = strings.TrimSpace(name)
+	for _, b := range bots {
+		if b.ID == name {
+			return b, nil
+		}
+	}
 	var found []store.Bot
 	for _, b := range bots {
 		if strings.EqualFold(strings.TrimSpace(b.Name), name) {

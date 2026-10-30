@@ -5,11 +5,15 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 
 	"bqbot/internal/store"
 )
 
 func (hd *handoff) allowedTarget(from *turn, id string) bool {
+	if id == from.bot.ID || slices.Contains(from.ancestors, id) || from.depth >= 4 {
+		return false
+	}
 	if from.roomID == "" {
 		return true
 	}
@@ -59,6 +63,10 @@ func (hd *handoff) serveCloseThread(w http.ResponseWriter, r *http.Request) {
 	from := hd.caller(r, false)
 	if from == nil {
 		reply(w, 401, "", errors.New("invalid tool grant"))
+		return
+	}
+	if from.consult {
+		reply(w, 403, "", errors.New("consult cannot close threads"))
 		return
 	}
 	var req struct {
@@ -125,7 +133,7 @@ func (hd *handoff) serveRoomTargets(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, id := range room.Members {
-			if id != from.bot.ID {
+			if hd.allowedTarget(from, id) {
 				b, e := hd.h.Bot(id)
 				if e == nil {
 					targets = append(targets, map[string]string{"id": b.ID, "name": b.Name, "room_id": room.ID})

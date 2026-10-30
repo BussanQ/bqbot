@@ -75,6 +75,11 @@ func New(st *store.Store, drivers ...driver.Driver) *Harness {
 var ErrBusy = errors.New("the bot is still answering")
 
 type turn struct {
+	external         *externalGroup
+	consult          bool
+	ancestors        []string
+	chain            *coordinationChain
+	delivery         *asyncJob
 	thread           store.Thread
 	roomID           string
 	roomUserRecorded bool
@@ -137,6 +142,9 @@ func newTurn(parent context.Context, bot store.Bot, user store.Message, from *tu
 	ctx, cancel := context.WithCancel(parent)
 	t := &turn{bot: bot, user: user, ctx: ctx, cancel: cancel, done: make(chan struct{}), pending: map[string]*pendingApproval{}, approvalIDs: map[string]bool{}, steer: make(chan string, 32), waiting: map[*turn]bool{}, reply: store.Message{ID: store.NewID(), Role: "assistant", At: time.Now()}}
 	if from != nil {
+		t.ancestors = append(append([]string{}, from.ancestors...), from.bot.ID)
+		t.chain = from.chain
+		t.consult = from.consult
 		t.depth = from.depth + 1
 		t.asker = from.bot.ID
 		t.askerName = from.bot.Name
@@ -326,6 +334,15 @@ func (h *Harness) note(t *turn, line string) {
 
 func (h *Harness) run(t *turn) {
 	in, revoke, err := h.prepare(t)
+	var closeExternal func()
+	if err == nil {
+		var externalErr error
+		closeExternal, externalErr = h.prepareExternal(t, &in)
+		if closeExternal != nil {
+			defer closeExternal()
+		}
+		err = externalErr
+	}
 	if revoke != nil {
 		defer revoke()
 	}
@@ -347,6 +364,9 @@ func (h *Harness) run(t *turn) {
 	if revoke != nil {
 		revoke()
 	} // revoke before completion becomes observable
+	if closeExternal != nil {
+		closeExternal()
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if err == nil {
@@ -376,6 +396,9 @@ func (h *Harness) run(t *turn) {
 		err = errors.Join(err, h.Store.SaveThreadCursor(t.thread, t.cursorValue))
 	}
 	t.result = *clone(t.reply)
+	if t.chain != nil && t.depth == 0 {
+		t.chain.latest = t
+	}
 	t.err = err
 	if stopped {
 		t.err = context.Canceled
@@ -384,8 +407,9 @@ func (h *Harness) run(t *turn) {
 	if e := h.publishLocked(t, Update{BotID: t.bot.ID, Reply: clone(t.reply), Done: true, Err: err, Busy: len(h.queues[t.bot.ID]) > 0}); e != nil {
 		t.err = errors.Join(t.err, e)
 	}
-	close(t.done)
 	h.completeJobLocked(t)
+	close(t.done)
+	h.cleanCanceledJobsLocked()
 	h.nextLocked(t.bot.ID)
 }
 
@@ -394,6 +418,12 @@ func (h *Harness) prepare(t *turn) (driver.TurnInput, func(), error) {
 	defer h.mu.Unlock()
 	var in driver.TurnInput
 	// Refresh queued jobs so edits and the preceding turn's cursor take effect.
+	if t.job != nil {
+		t.job.assignment.Status = "running"
+		if err := h.Store.SaveAssignment(t.job.assignment); err != nil {
+			return in, nil, err
+		}
+	}
 	b, err := h.Bot(t.bot.ID)
 	if err != nil {
 		return in, nil, err
@@ -478,7 +508,7 @@ func (h *Harness) prepare(t *turn) (driver.TurnInput, func(), error) {
 			in.History = append(in.History, driver.HistoryMessage{Role: m.Role, Text: text, Attachments: append([]driver.Attachment(nil), m.Attachments...)})
 		}
 	}
-	if t.asker != "" {
+	if t.asker != "" && !t.wake {
 		in.Text = fmt.Sprintf("%s, another of the person's bots, asks you this. Your answer goes back to %s, not to the person.\n\n%s", t.askerName, t.askerName, t.user.Text)
 	}
 	in.Approve = func(ctx context.Context, req driver.ApprovalRequest) (driver.ApprovalDecision, error) {
@@ -497,7 +527,7 @@ func (h *Harness) prepare(t *turn) (driver.TurnInput, func(), error) {
 		}
 		revokes = append(revokes, rv)
 		in.ApprovalMCP = srv
-		if t.depth == 0 {
+		if t.depth <= 4 {
 			srv, rv, e = h.hand.grant(t, false)
 			if e != nil {
 				return in, revoke, e

@@ -35,7 +35,7 @@ func TestThreadToolProtocolHTTP(t *testing.T) {
 	defer srv.Close()
 	backend := &HTTPBackend{URL: srv.URL, Token: "scoped"}
 	tools := backendTools(backend)["tools"].([]any)
-	if len(tools) != 5 {
+	if len(tools) != len(Tools) {
 		t.Fatalf("tool list %+v", tools)
 	}
 	for _, name := range []string{ToolThreads, ToolCloseThread, ToolRoomTargets} {

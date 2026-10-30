@@ -34,7 +34,7 @@ func (d *Pi) Args(in TurnInput) []string {
 	if in.MCP != nil {
 		// An mcp__ entry limits MCP tools to the ones named; --approve
 		// trusts the bot's folder, where Run wrote .pi/mcp.json.
-		args = append(args, "--extension", "builtin:mcp", "--tools", "read,grep,find,ls,edit,write,bash,"+strings.Join(mcpToolNames(), ","), "--approve")
+		args = append(args, "--extension", "builtin:mcp", "--tools", "read,grep,find,ls,edit,write,bash,"+strings.Join(mcpToolNames(in.MCP), ","), "--approve")
 	} else {
 		args = append(args, "--tools", "read,grep,find,ls,edit,write,bash", "--no-mcp")
 	}

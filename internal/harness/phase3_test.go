@@ -576,7 +576,7 @@ func TestRoomHandoffUsesSharedContextAndWakesOnce(t *testing.T) {
 	}
 	input := receive(t, inputs)
 	waitJobs(t, r.h)
-	if input.Dir != room.WorkDir || !strings.Contains(input.System, room.Instructions) || input.MCP != nil {
+	if input.Dir != room.WorkDir || !strings.Contains(input.System, room.Instructions) || input.MCP == nil {
 		t.Fatalf("handoff context %+v", input)
 	}
 	messages, err := r.st.RoomTranscript(room.ID)

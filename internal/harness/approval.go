@@ -43,6 +43,18 @@ func (h *Harness) approval(ctx context.Context, t *turn, req driver.ApprovalRequ
 		h.mu.Unlock()
 		return driver.ApprovalDecision{}, fmt.Errorf("invalid approval kind %q", req.Kind)
 	}
+	if t.consult && req.Kind == "tool" {
+		allowed := false
+		switch strings.ToLower(req.Tool) {
+		case "read", "readfile", "read_file", "grep", "glob", "find", "ls":
+			allowed = true
+		}
+		h.mu.Unlock()
+		if allowed {
+			return driver.ApprovalDecision{Outcome: "allow"}, nil
+		}
+		return driver.ApprovalDecision{Outcome: "deny"}, nil
+	}
 	if req.ID == "" {
 		req.ID = store.NewID()
 	}

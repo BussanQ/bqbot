@@ -562,7 +562,7 @@ func TestCyclicHandoffsDoNotDeadlock(t *testing.T) {
 	release := make(chan struct{})
 	base := &asker{}
 	d := &testDriver{run: func(ctx context.Context, in driver.TurnInput, emit func(driver.Event)) error {
-		if in.MCP != nil {
+		if strings.HasPrefix(in.Text, "ask ") {
 			started <- struct{}{}
 			select {
 			case <-release:
