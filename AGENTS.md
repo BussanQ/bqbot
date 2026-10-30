@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-bqbot is a Go desktop chat application using MyGo's system WebView and local agent CLIs. `web/` contains the embedded HTML, CSS, JavaScript, and Markdown renderer; `webview_app.go` provides the Go bridge. Root `view.go` and `phase*_view.go` retain the shared conversation state/reducer and legacy native views. Backend packages live in `internal/`: `driver` adapts engines; `harness` coordinates turns; `service` exposes authenticated local APIs; `mcp` implements tools; `store` persists data. Go tests sit beside sources as `*_test.go`; JavaScript tests live in `tests/`. `docs/PLAN.md` is the roadmap; `docs/WEBVIEW.md` describes the desktop frontend. Packaging uses `mygo.json`; generated artifacts belong in ignored `build/`.
+bqbot is a Go desktop chat application using MyGo's system WebView and local agent CLIs. `web/` contains the embedded HTML, CSS, JavaScript, and Markdown renderer; `webgo/desktop.go` provides the Go bridge. `webgo/` groups Go bridge code, shared conversation state/reducers, window startup, and retained legacy native views by feature; `web/assets.go` embeds the frontend resources. Backend packages live in `internal/`: `driver` adapts engines; `harness` coordinates turns; `service` exposes authenticated local APIs; `mcp` implements tools; `store` persists data. Go tests sit beside sources as `*_test.go`; JavaScript tests live in `tests/`. `docs/PLAN.md` is the roadmap; `docs/WEBVIEW.md` describes the desktop frontend. Packaging uses `mygo.json`; generated artifacts belong in ignored `build/`.
 
 ## Build, Test, and Development Commands
 
@@ -12,9 +12,9 @@ Use the Go version declared in `go.mod` (currently 1.27.3).
 - `go build -o build/bqbot .`: compile the application binary.
 - `mygo build`: package the application using an installed MyGo CLI and `mygo.json`.
 - `go test ./internal/store`: run one affected package's tests; substitute `driver`, `harness`, or `mcp` as needed.
-- `go test . -run 'TestDesktop|TestWebFrontend'`: test the WebView bridge and embedded assets.
+- `go test ./webgo -run 'TestDesktop|TestWebFrontend'`: test the WebView bridge and embedded assets.
 - `node --test tests/markdown.test.mjs`: check Markdown rendering and HTML escaping.
-- `go test . -run TestCreateChatDelete`: run a legacy native UI behavior test.
+- `go test ./webgo -run TestCreateChatDelete`: run a legacy native UI behavior test.
 
 ## Coding Style & Naming Conventions
 

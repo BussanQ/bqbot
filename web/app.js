@@ -1,5 +1,9 @@
 import { escapeHTML as esc, markdown } from "./markdown.js";
-import { createToolsUI } from "./phase4.js";
+import { createToolsUI } from "./tools.js";
+import { createRemoteUI } from "./remote.js";
+import { createTeamUI } from "./team.js";
+import { createVoiceUI } from "./voice.js";
+import { createComputerUI } from "./computer.js";
 
 const paths = {
   plus: "M12 5v14M5 12h14",
@@ -116,6 +120,7 @@ async function refresh() {
       refreshAgain = false;
       state = await bridge("State");
       render();
+      voiceUI.onConversation(state).catch(showError);
     } while (refreshAgain);
   } finally {
     refreshing = false;
@@ -237,7 +242,12 @@ function renderWelcome() {
 }
 function messageHTML(m) {
   const b = botByID(m.bot_id) || currentBot() || { name: "伙伴" };
-  return `${m.role === "user" ? `<span class="avatar">${icon("user")}</span>` : avatar(b)}<div class="message-content"><div class="message-heading"><strong>${m.role === "user" ? "你" : esc(b.name)}</strong><time>${time(m.at)}</time><button class="icon-button" data-copy-message="${esc(m.id)}" aria-label="复制消息">${icon("copy")}</button></div><div class="markdown">${markdown(m.text)}</div>${imagesHTML(m.attachments)}${m.tools?.length ? `<details class="tool-lines"><summary>工具与协作 · ${m.tools.length} 项活动</summary><ul>${m.tools.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></details>` : ""}</div>`;
+  return `${m.role === "user" ? `<span class="avatar">${icon("user")}</span>` : avatar(b)}<div class="message-content"><div class="message-heading"><strong>${m.role === "user" ? "你" : esc(b.name)}</strong><time>${time(m.at)}</time><button class="icon-button" data-copy-message="${esc(m.id)}" aria-label="复制消息">${icon("copy")}</button>${m.role === "assistant" ? `<button class="model-button" data-speak-message="${esc(m.id)}" aria-label="朗读这条回复">朗读</button>` : ""}</div><div class="markdown">${markdown(m.text)}</div>${messageImagesHTML(m.attachments)}${m.tools?.length ? `<details class="tool-lines"><summary>工具与协作 · ${m.tools.length} 项活动</summary><ul>${m.tools.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></details>` : ""}</div>`;
+}
+function messageImagesHTML(images = []) {
+  const screenshots = images.filter((a) => a.name?.startsWith("computer-"));
+  const attachments = images.filter((a) => !a.name?.startsWith("computer-"));
+  return imagesHTML(attachments) + (screenshots.length ? `<details class="computer-screenshots"><summary>电脑截图 · ${screenshots.length} 张</summary>${imagesHTML(screenshots)}</details>` : "");
 }
 function imagesHTML(images) {
   return `<div class="message-images">${(images || [])
@@ -518,7 +528,7 @@ async function openSettings() {
   ].filter((e) => e !== "echo");
   openDialog(
     "引擎设置",
-    `<form>${field("选择引擎", "engine", engines[0], { select: engines })}<div id="engine-settings"></div><p class="form-help">使用环境变量名称配置 API 密钥。密钥本身不会保存在界面中。</p><button type="button" class="secondary" data-routing>配置群聊决策模型</button><button type="button" class="secondary" data-tools-home>工具与自动化</button>${dialogActions("保存设置")}</form>`,
+    `<form>${field("选择引擎", "engine", engines[0], { select: engines })}<div id="engine-settings"></div><p class="form-help">使用环境变量名称配置 API 密钥。密钥本身不会保存在界面中。</p><button type="button" class="secondary" data-routing>配置群聊决策模型</button><button type="button" class="secondary" data-tools-home>工具与自动化</button><button type="button" class="secondary" data-computer-home>伙伴的电脑</button><button type="button" class="secondary" data-voice-home>语音与通话</button><button type="button" class="secondary" data-team-home>团队与分享</button><button type="button" class="secondary" data-remote-home>手机与远程访问</button><button type="button" class="secondary" data-update>检查更新</button>${dialogActions("保存设置")}</form>`,
     async (data) => {
       keep();
       await mutate({ kind: "save-settings", settings });
@@ -859,6 +869,35 @@ $("details").onclick = () => {
   renderInspector();
 };
 const toolsUI = createToolsUI({ bridge, openDialog, field, dialogActions, getBots: () => state.bots || [], notify, run });
+const remoteUI = createRemoteUI({ bridge, openDialog, field, dialogActions, getBots: () => state.bots || [], notify, run });
+const teamUI = createTeamUI({ bridge, openDialog, field, dialogActions, notify, run, refresh, getRooms: () => state.rooms || [] });
+const voiceUI = createVoiceUI({
+  bridge, openDialog, field, dialogActions, notify, run,
+  getConversation: () => state.conversation,
+  sendText: async (text, captured) => {
+    if (!captured || captured.closed) throw new Error("请选择可发送消息的对话");
+    await mutate({ kind: "send", ...scope(captured), text, mode: "queue" });
+  },
+  setDraft: (text) => {
+    if (!state.conversation || state.conversation.closed) return;
+    $("draft").value = text;
+    drafts.set(conversationKey, text);
+    resizeDraft();
+    renderComposer();
+  },
+});
+const computerUI = createComputerUI({ bridge, openDialog, field, dialogActions, getBots: () => state.bots || [], getConversation: () => state.conversation, notify, run });
+window.addEventListener("pagehide", () => { voiceUI.shutdown(); computerUI.shutdown(); });
+$("computer-panel").onclick = run(() => computerUI.home());
+$("dictate").onclick = run(() => voiceUI.dictate());
+$("voice-call").onclick = run(() => voiceUI.toggleCall());
+$("voice-stop").onclick = run(() => voiceUI.stop());
+if (!(globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition)) {
+  for (const id of ["dictate", "voice-call"]) {
+    $(id).disabled = true;
+    $(id).title = "此 WebView 不支持语音识别，请使用系统键盘听写";
+  }
+}
 $("settings").onclick = run(openSettings);
 $("search").onclick = openSearch;
 $("show-hidden").onclick = run(async () => {
@@ -876,6 +915,11 @@ $("dialog").addEventListener("click", (e) => {
   if (e.target.closest("[data-cancel]")) $("dialog").close();
   if (e.target.closest("[data-routing]")) openRouting().catch(showError);
   if (e.target.closest("[data-tools-home]")) toolsUI.home().catch(showError);
+  if (e.target.closest("[data-remote-home]")) remoteUI.home().catch(showError);
+  if (e.target.closest("[data-team-home]")) teamUI.home().catch(showError);
+  if (e.target.closest("[data-voice-home]")) voiceUI.home().catch(showError);
+  if (e.target.closest("[data-computer-home]")) computerUI.home().catch(showError);
+  if (e.target.closest("[data-update]")) bridge("CheckForUpdates").catch(showError);
 });
 $("welcome").onclick = (e) => {
   const el = e.target.closest("[data-prompt]");
@@ -910,6 +954,12 @@ $("inspector").onclick = run(async (e) => {
   if (e.target.closest("[data-new-thread]")) openThread();
 });
 $("messages").onclick = run(async (e) => {
+  const speak = e.target.closest("[data-speak-message]");
+  if (speak) {
+    const message = state.conversation?.messages.find((m) => m.id === speak.dataset.speakMessage);
+    if (message) await voiceUI.speak(message.text);
+    return;
+  }
   const link = e.target.closest("a");
   if (link) {
     e.preventDefault();

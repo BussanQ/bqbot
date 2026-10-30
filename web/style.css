@@ -680,6 +680,7 @@ kbd {
 }
 .composer-tools {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 7px;
   flex: 1;
@@ -1138,6 +1139,23 @@ kbd {
 #approvals {
   max-height: 235px;
   overflow: auto;
+}
+.pair-code {
+  font: 28px var(--mono);
+  letter-spacing: 0.16em;
+  text-align: center;
+  padding: 20px;
+  background: var(--soft);
+  border-radius: 10px;
+}
+.computer-screenshots {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.computer-screenshots summary {
+  cursor: pointer;
+  padding: 6px 0;
 }
 .secondary {
   border: 1px solid var(--line);

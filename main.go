@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -12,7 +13,9 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/egoist/mygo"
+	"bqbot/webgo"
+
+	"bqbot/internal/headless"
 
 	"bqbot/internal/driver"
 	"bqbot/internal/harness"
@@ -20,6 +23,8 @@ import (
 	"bqbot/internal/service"
 	"bqbot/internal/store"
 )
+
+var serviceListenAddr = service.DefaultAddr
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "mcp" {
@@ -30,9 +35,25 @@ func main() {
 		}
 		return
 	}
+	if headless.Handles(os.Args[1:]) {
+		fixPath()
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := headless.Execute(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
+		cancel()
+		os.Exit(code)
+	}
 	if len(os.Args) > 1 && os.Args[1] != "serve" {
-		fmt.Fprintln(os.Stderr, "usage: bqbot [serve]")
+		fmt.Fprintln(os.Stderr, "usage: bqbot [serve | team apply/export/presets | run | control]")
 		os.Exit(2)
+	}
+	if len(os.Args) > 1 && os.Args[1] == "serve" {
+		flags := flag.NewFlagSet("serve", flag.ExitOnError)
+		flags.StringVar(&serviceListenAddr, "listen", service.DefaultAddr, "loopback listen address; port 0 selects an available port")
+		_ = flags.Parse(os.Args[2:])
+		if flags.NArg() != 0 {
+			fmt.Fprintln(os.Stderr, "usage: bqbot serve [--listen 127.0.0.1:8799]")
+			os.Exit(2)
+		}
 	}
 	fixPath()
 	dir, err := store.DefaultDir()
@@ -51,7 +72,7 @@ func main() {
 		log.Printf("bot handoff is off: %v", err)
 	}
 	defer h.Close()
-	server, err := service.Listen(h, "127.0.0.1:8799")
+	server, err := service.Listen(h, serviceListenAddr)
 	var api *service.Client
 	if err != nil {
 		if len(os.Args) > 1 {
@@ -77,32 +98,7 @@ func main() {
 		return
 	}
 
-	desktop, err := newDesktop(api)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer desktop.close()
-	mygo.SetFrontend(webFrontend())
-	mygo.Bind(desktop)
-	mygo.App.WhenReady(func() {
-		win := mygo.NewWindow(mygo.WindowOptions{
-			Title:                "bqbot",
-			Width:                1200,
-			Height:               800,
-			MinWidth:             720,
-			MinHeight:            520,
-			StateKey:             "main",
-			URL:                  "/",
-			TitleBarStyle:        mygo.TitleBarHidden,
-			TrafficLightPosition: &mygo.Point{X: 20, Y: 20},
-			BackgroundColor:      "light-dark(#faf9f6, #171a18)",
-		})
-		// Keep the privileged bridge on the bundled application page.
-		win.Page().OnWillNavigate(func(e *mygo.NavigateEvent) { e.PreventDefault() })
-		desktop.start(func() { _ = desktopChanged.Emit(win, true) })
-		win.OnClosed(desktop.close)
-	})
-	if err := mygo.App.Run(); err != nil {
+	if err := webgo.Run(api); err != nil {
 		log.Fatal(err)
 	}
 }

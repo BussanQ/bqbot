@@ -19,6 +19,7 @@ import (
 	"bqbot/internal/composio"
 	"bqbot/internal/driver"
 	"bqbot/internal/harness"
+	"bqbot/internal/remote"
 	"bqbot/internal/store"
 )
 
@@ -28,6 +29,8 @@ const DefaultAddr = "127.0.0.1:8799"
 // Server owns an HTTP listener, but does not own or stop the harness.
 // Token is a credential: callers must never log it or put it in argv.
 type Server struct {
+	remoteMu     sync.Mutex
+	remote       *remote.Gateway
 	URL          string
 	Token        string
 	h            *harness.Harness
@@ -111,6 +114,12 @@ func (s *Server) Close() error {
 	}
 	s.closed = true
 	err := s.http.Close()
+	s.remoteMu.Lock()
+	if s.remote != nil {
+		err = errors.Join(err, s.remote.Close())
+		s.remote = nil
+	}
+	s.remoteMu.Unlock()
 	if s.webhook != nil {
 		err = errors.Join(err, s.webhook.Close())
 		s.webhook = nil
@@ -132,6 +141,10 @@ func (s *Server) handler() http.Handler {
 	s.composioRoutes(mux)
 	s.integrationRoutes(mux)
 	s.automationRoutes(mux)
+	s.remoteRoutes(mux)
+	s.teamRoutes(mux)
+	s.voiceRoutes(mux)
+	s.computerRoutes(mux)
 	mux.HandleFunc("GET /v1/bots", func(w http.ResponseWriter, r *http.Request) { v, e := s.h.Store.Bots(); result(w, v, e) })
 	mux.HandleFunc("PUT /v1/bots", s.saveBot)
 	mux.HandleFunc("DELETE /v1/bots/{bot}", s.withBot(func(w http.ResponseWriter, r *http.Request, b store.Bot) { result(w, struct{}{}, s.h.DeleteBot(b.ID)) }))

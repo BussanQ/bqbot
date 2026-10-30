@@ -77,5 +77,5 @@ and original-thread wake, stop/close/delete/shutdown cancellation and waiting,
 member removal, canceled routing, scoped/revoked MCP grants, HTTP Echo CRUD and
 snapshots, validation, credential boundaries, and the expanded CLI whitelists.
 No real provider requests or dependency installs are used. Store migration and
-concurrency tests live in `internal/store/chat_test.go`; root UI interactions and
-light/dark screenshots are covered by `phase3_view_test.go`.
+concurrency tests live in `internal/store/chat_test.go`; desktop UI interactions and
+light/dark screenshots are covered by `webgo/workspace_view_test.go`.

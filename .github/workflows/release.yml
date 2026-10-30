@@ -1,0 +1,76 @@
+name: Package release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag matching mygo.json (v0.1.0)
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin
+            targets: darwin/arm64,darwin/amd64
+          - os: ubuntu-latest
+            platform: windows
+            targets: windows/amd64,windows/arm64
+          - os: ubuntu-latest
+            platform: linux
+            targets: linux/amd64,linux/arm64
+    runs-on: ${{ matrix.os }}
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Windows packaging tools
+        if: matrix.platform == 'windows'
+        run: sudo apt-get update && sudo apt-get install -y nsis osslsigncode
+      - name: Prepare signing credentials
+        env:
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+        run: python3 -I scripts/release-signing.py
+      - name: Configure signed release
+        env:
+          BQBOT_RELEASE_TAG: ${{ inputs.tag }}
+          BQBOT_RELEASE_PLATFORM: ${{ matrix.platform }}
+          MYGO_UPDATER_PUBLIC_KEY: ${{ vars.MYGO_UPDATER_PUBLIC_KEY }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+          MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
+          MYGO_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: node scripts/configure-release.mjs
+      - name: Build signed installers and updates
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+          MYGO_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          RELEASE_TARGETS: ${{ matrix.targets }}
+        run: go run github.com/egoist/mygo/cmd/mygo@v0.7.1 build -platform "$RELEASE_TARGETS"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bqbot-${{ matrix.platform }}
+          path: build/
+          if-no-files-found: error
+      - name: Remove temporary signing credentials
+        if: always()
+        env:
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+        run: python3 -I scripts/release-signing.py --clean

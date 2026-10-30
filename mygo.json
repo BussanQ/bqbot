@@ -2,5 +2,19 @@
   "name": "bqbot",
   "identifier": "dev.bussanq.bqbot",
   "version": "0.1.0",
-  "out": "build"
+  "out": "build",
+  "slug": "bqbot",
+  "publisher": "BussanQ",
+  "macos": {
+    "minimumSystemVersion": "12.0",
+    "infoPlist": {
+      "NSMicrophoneUsageDescription": "用于你主动开启的语音听写和通话。",
+      "NSSpeechRecognitionUsageDescription": "将你主动录入的语音转换为聊天文本。"
+    }
+  },
+  "linux": {
+    "comment": "Desktop chat with local agent CLIs",
+    "categories": ["Utility", "Network"],
+    "command": "bqbot"
+  }
 }

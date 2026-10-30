@@ -20,6 +20,7 @@ import (
 type externalTool struct {
 	tool   mcpgateway.Tool
 	client *mcpgateway.Client
+	invoke func(context.Context, json.RawMessage) (json.RawMessage, error)
 }
 type externalGroup struct {
 	clients []*mcpgateway.Client
@@ -66,7 +67,7 @@ func (h *Harness) prepareExternal(t *turn, in *driver.TurnInput) (func(), error)
 			if len(name) > 64 {
 				return errors.New("MCP server ID is too long for tool names")
 			}
-			group.tools[name] = externalTool{tool, client}
+			group.tools[name] = externalTool{tool: tool, client: client}
 		}
 		return nil
 	}
@@ -120,7 +121,11 @@ func (h *Harness) prepareExternal(t *turn, in *driver.TurnInput) (func(), error)
 			return nil, err
 		}
 	}
-	if len(group.clients) == 0 {
+	if err = h.prepareComputer(t, group); err != nil {
+		cleanup()
+		return nil, err
+	}
+	if len(group.tools) == 0 {
 		return cleanup, nil
 	}
 	if in.MCP == nil {
@@ -202,6 +207,11 @@ func (hd *handoff) serveExternalCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hd.h.note(from, "MCP: "+tool.tool.Name)
-	result, err := tool.client.Call(ctx, tool.tool.Name, req.Arguments)
+	var result json.RawMessage
+	if tool.invoke != nil {
+		result, err = tool.invoke(ctx, req.Arguments)
+	} else {
+		result, err = tool.client.Call(ctx, tool.tool.Name, req.Arguments)
+	}
 	reply(w, 200, string(result), err)
 }

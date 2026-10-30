@@ -76,7 +76,7 @@
 - [x] 会话记忆管理与本地召回、保留原文的手动上下文压缩、transcript 全文搜索与跳转。
 - [x] 多个独立线程及侧栏列表；旧转交会话原位迁移；异步转交完成后自动唤醒提问方，支持新线程与关闭、取消。
 
-### 阶段 4：工具与自动化（核心实现已落地，尚未完成整体验收）
+### 阶段 4：工具与自动化（已实现，本地定向回归通过）
 
 使用方式、接口、持久化与限制见 [阶段 4 说明](PHASE4.md)。以下勾选表示已有代码实现，不代表全部场景已通过验收。
 
@@ -86,22 +86,42 @@
 - [x] 自动化：一次性、工作日、间隔和 webhook 触发；上一轮及关联协调链未结束时跳过重叠触发，持久化运行历史和重启中断状态。
 - [x] Webhook 接收器：127.0.0.1:8800，仅开放 `/health` 和 `/hooks/{id}`，使用独立 bearer 密钥，支持开启、关闭和轮换。
 - [x] WebView 设置入口：MCP、Composio、自动任务、运行历史与 webhook 管理。
-- [ ] 整合后的回归、实际 WebView 交互和浅深色视觉验收尚未完成；按当前要求不继续测试。
-- [ ] 真实 Composio 授权、系统钥匙串及外部引擎端到端行为尚未完成实测。
+- [x] 协调、自动化、外部 MCP、Composio 模拟接口、桌面桥接的定向回归通过；真实 WebView 完成对话与各阶段设置入口操作，检查浅深色和窄窗口聊天截图。
+- [ ] 真实 Composio 授权、系统钥匙串及外部引擎端到端行为仍需相应账号环境验收。
 
-### 阶段 5：Bot 的电脑
-- 电脑面板：云桌面（Boat API）带实时截图预览，本地 VM，宿主机控制（Cua Driver，需要显式开启）。截图折叠进 transcript。
+### 阶段 5：Bot 的电脑（已实现连接与控制）
 
-### 阶段 6：语音
-- TTS：ElevenLabs、Fish Audio、xAI、macOS `say`、本地 Chatterbox，用 `mygo/audio` 播放；朗读回复，通话模式；听写。
+详见 [阶段 5](PHASE5.md)。
 
-### 阶段 7：团队、分享、无界面运行
-- 导入团队 Markdown（YAML frontmatter）；导出部门时清除秘密，导入的 routine 默认暂停；预设 bot。
-- 无界面 CLI：`bqbot team apply`、`bqbot run --json --export`，退出码可供脚本判断。
-- stdio MCP 控制面（受限：不开放审批、删除、凭据）。
-- 手机或远程访问：配对码，Tailscale 或反向代理。
+- [x] Boat 云桌面、已有本地/远程 VM 的 Cua MCP、显式授权的宿主 Cua。
+- [x] 实时截图、鼠标键盘输入、截图折叠进 transcript；Bot 操作复用每轮审批，consult 禁用。
+- [ ] 真实云桌面与 VM/宿主权限验收。VM 生命周期由现有虚拟机工具管理，应用不负责创建或启动 VM。
 
-### 阶段 8：发布
-- `mygo build` 打包 dmg / exe 安装包 / deb，签名、公证、自动更新；分析统计默认关闭。
+### 阶段 6：语音（已实现）
+
+详见 [阶段 6](PHASE6.md)。
+
+- [x] ElevenLabs、Fish Audio、xAI、macOS `say`、本地 Chatterbox 兼容接口，用 `mygo/audio` 播放；可停止及取消。
+- [x] 单条回复朗读、自动朗读、通话模式、系统 WebView 听写能力检测。
+- [x] 本机真实 WebView → macOS `say` → MyGo 播放完成链路验证。
+- [ ] 云语音账号、Chatterbox 推理和真实麦克风听写仍需外部环境验收。
+
+### 阶段 7：团队、分享、无界面运行（已实现）
+
+详见 [阶段 7](PHASE7.md) 和 [远程访问](REMOTE.md)。
+
+- [x] 团队 Markdown / YAML 导入、预览与部门导出；仅导出分享字段，导入 routine 默认暂停，Bot 使用 Ask；预设团队。
+- [x] `bqbot team apply/export/presets`、`bqbot run --json --export`、独立线程、明确退出码与超时取消。
+- [x] `bqbot control` 受限 stdio MCP，不开放审批、删除、凭据。
+- [x] 远程浏览器聊天、短时单次配对码、设备 Bot 范围与撤销，供 Tailscale / HTTPS 反向代理转发。
+- [ ] 实际手机与 Tailscale 环境验收；自由文本中手写的秘密仍须分享前审阅。
+
+### 阶段 8：发布（打包与发布流程已实现）
+
+详见 [发布说明](RELEASE.md)。
+
+- [x] MyGo 打包配置、各平台 CI 产物流程、签名/公证配置注入、签名更新 UI；无统计 SDK。
+- [x] 本机 macOS arm64 `.app` 与 DMG 开发打包通过。
+- [ ] 正式证书签名、公证、Windows/Linux 安装和真实跨版本更新需要发布凭据与目标系统验收；没有发布 Release。
 
 不实现的部分：`enterprise/` 目录（另有许可）、BotMRR 和 SupaMaus 等品牌内容。
