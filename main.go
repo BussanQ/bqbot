@@ -1,5 +1,5 @@
 // Bqbot is a chat app whose contacts are AI agents running on the agent
-// CLIs of this machine (claude, codex, pi), drawn with MyGo's native UI.
+// CLIs of this machine, presented in MyGo's system WebView.
 package main
 
 import (
@@ -13,7 +13,6 @@ import (
 	"syscall"
 
 	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/ui"
 
 	"bqbot/internal/driver"
 	"bqbot/internal/harness"
@@ -78,30 +77,30 @@ func main() {
 		return
 	}
 
-	var win *mygo.Window
-	a, err := newApp(api, func(fn func()) { win.Update(fn) })
+	desktop, err := newDesktop(api)
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer desktop.close()
+	mygo.SetFrontend(webFrontend())
+	mygo.Bind(desktop)
 	mygo.App.WhenReady(func() {
-		win = mygo.NewWindow(mygo.WindowOptions{
-			Title:     "bqbot",
-			Width:     1080,
-			Height:    720,
-			MinWidth:  640,
-			MinHeight: 420,
-			StateKey:  "main",
-			// The sidebar reaches up under the traffic lights, as in apps
-			// with a sidebar on macOS 26.
+		win := mygo.NewWindow(mygo.WindowOptions{
+			Title:                "bqbot",
+			Width:                1200,
+			Height:               800,
+			MinWidth:             720,
+			MinHeight:            520,
+			StateKey:             "main",
+			URL:                  "/",
 			TitleBarStyle:        mygo.TitleBarHidden,
 			TrafficLightPosition: &mygo.Point{X: 20, Y: 20},
-			Vibrancy:             mygo.VibrancySidebar,
-			BackgroundColor:      "light-dark(#ffffff, #141416)",
-			Content:              ui.View(a.view),
+			BackgroundColor:      "light-dark(#faf9f6, #171a18)",
 		})
-		a.connect()
-		win.OnClosed(func() { a.cancel() })
-		a.probeEngines()
+		// Keep the privileged bridge on the bundled application page.
+		win.Page().OnWillNavigate(func(e *mygo.NavigateEvent) { e.PreventDefault() })
+		desktop.start(func() { _ = desktopChanged.Emit(win, true) })
+		win.OnClosed(desktop.close)
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)

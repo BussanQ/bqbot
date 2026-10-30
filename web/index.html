@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <title>bqbot · 你的 AI 工作空间</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <div class="workspace">
+      <aside class="sidebar" aria-label="工作空间导航">
+        <div class="window-space" aria-hidden="true"></div>
+        <div class="brand">
+          <span class="brand-mark"><i></i><i></i><i></i><i></i></span
+          ><span>bqbot<span class="brand-dot">.</span></span
+          ><span class="local-tag">LOCAL</span>
+        </div>
+        <button class="search-trigger" id="search">
+          <span data-icon="search"></span><span>搜索所有对话</span
+          ><kbd>⌘ K</kbd>
+        </button>
+        <button class="primary new-chat" id="new-bot">
+          <span data-icon="plus"></span>添加 AI 伙伴
+        </button>
+        <div class="navigation-scroll">
+          <div class="section-label">
+            <span>我的伙伴</span><span id="bot-count">0</span>
+          </div>
+          <nav id="bots" aria-label="AI 伙伴"></nav>
+          <div class="section-label room-label">
+            <span>协作空间</span
+            ><button
+              class="icon-button"
+              id="new-room"
+              aria-label="新建协作空间"
+            >
+              <span data-icon="plus"></span>
+            </button>
+          </div>
+          <nav id="rooms" aria-label="协作空间"></nav>
+          <button class="subtle reveal-hidden" id="show-hidden">
+            显示已隐藏的伙伴
+          </button>
+        </div>
+        <div class="sidebar-bottom">
+          <button id="settings" class="footer-button">
+            <span data-icon="settings"></span>引擎设置</button
+          ><button class="icon-button" id="theme" aria-label="切换主题">
+            <span data-icon="sun"></span>
+          </button>
+        </div>
+        <div class="local-status">
+          <span class="status-dot"></span>本地工作空间<span>由你掌控</span>
+        </div>
+      </aside>
+      <main class="main-panel">
+        <header class="topbar">
+          <div class="breadcrumb">
+            <span data-icon="grid"></span><span>工作空间</span
+            ><span class="slash">/</span
+            ><strong id="breadcrumb">开始对话</strong>
+          </div>
+          <div class="topbar-actions">
+            <button
+              class="icon-button"
+              id="new-thread"
+              aria-label="新建对话"
+              title="新建对话"
+            >
+              <span data-icon="compose"></span></button
+            ><button
+              class="icon-button"
+              id="details"
+              aria-label="伙伴详情"
+              title="伙伴详情"
+            >
+              <span data-icon="panel"></span>
+            </button>
+          </div>
+        </header>
+        <div class="chat-layout">
+          <section class="chat-pane" aria-label="对话">
+            <div class="conversation-header" id="conversation-header"></div>
+            <div id="status" class="status-banner" role="alert" hidden></div>
+            <div class="message-scroll" id="message-scroll">
+              <div class="conversation-width">
+                <section id="welcome" class="welcome"></section>
+                <div id="messages" role="log" aria-label="聊天消息"></div>
+                <div id="pending"></div>
+                <div id="typing" class="typing" role="status" hidden>
+                  <span></span><span></span><span></span
+                  ><small>正在思考与处理…</small>
+                </div>
+              </div>
+            </div>
+            <button class="jump-bottom" id="jump-bottom" hidden>
+              <span data-icon="down"></span>回到最新消息
+            </button>
+            <div class="composer-area">
+              <div id="approvals"></div>
+              <div class="composer" id="composer">
+                <div id="attachments" class="attachments"></div>
+                <textarea
+                  id="draft"
+                  aria-label="消息"
+                  rows="2"
+                  placeholder="写下你的想法，让我们一起完成。"
+                ></textarea>
+                <div class="composer-toolbar">
+                  <div class="composer-tools">
+                    <button
+                      class="icon-button"
+                      id="attach"
+                      aria-label="添加图片"
+                      title="添加图片"
+                    >
+                      <span data-icon="plus"></span></button
+                    ><button id="model" class="model-button">
+                      <span class="status-dot"></span
+                      ><span id="model-name">默认模型</span
+                      ><span data-icon="chevron"></span></button
+                    ><select id="send-mode" aria-label="忙碌时的发送方式">
+                      <option value="queue">加入队列</option>
+                      <option value="steer">追加指令</option>
+                    </select>
+                  </div>
+                  <button class="send-button" id="send" aria-label="发送消息">
+                    <span data-icon="up"></span></button
+                  ><button
+                    class="send-button stop-button"
+                    id="stop"
+                    aria-label="停止生成"
+                    hidden
+                  >
+                    <span data-icon="stop"></span>
+                  </button>
+                </div>
+              </div>
+              <div class="composer-hint">
+                <span><kbd>Enter</kbd> 发送 · <kbd>Shift Enter</kbd> 换行</span
+                ><span>想法在这里，开始发生。</span>
+              </div>
+            </div>
+          </section>
+          <aside
+            id="inspector"
+            class="inspector"
+            aria-label="对话详情"
+            hidden
+          ></aside>
+        </div>
+      </main>
+    </div>
+    <dialog id="dialog">
+      <div class="dialog-header">
+        <div>
+          <span class="eyebrow">YOUR WORKSPACE</span>
+          <h2 id="dialog-title"></h2>
+        </div>
+        <button class="icon-button" id="close-dialog" aria-label="关闭">
+          <span data-icon="close"></span>
+        </button>
+      </div>
+      <div id="dialog-body"></div>
+      <p id="dialog-error" class="form-error" role="alert" hidden></p>
+    </dialog>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </body>
+</html>

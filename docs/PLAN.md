@@ -1,5 +1,7 @@
 # bqbot：用 Go 重写 OpenMausBot 的实现方案
 
+> 界面实现更新：桌面入口现已使用 MyGo 的系统 WebView 和内嵌前端资源，详见 [WebView 桌面界面](WEBVIEW.md)。下文的原生 Go UI 描述保留为初期方案记录；服务与引擎架构继续沿用。
+
 目标：用 Go 1.27.3 实现 [OpenMausBot](https://github.com/milind-soni/OpenMausBot) 的功能，界面用
 [MyGo](https://github.com/egoist/mygo)（v0.7.1）的原生 UI（`package ui`，GPU 绘制，无 webview、无 Bun）。
 

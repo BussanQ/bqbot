@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-bqbot is a Go desktop chat application using MyGo's native UI and local agent CLIs. Root files contain startup (`main.go`), UI (`view.go`), theme, icons, and shell PATH handling. Backend packages live in `internal/`: `driver` adapts Claude, Codex, Pi, and the offline Echo engine; `harness` coordinates turns and bot handoffs; `mcp` implements the stdio tool server; `store` persists bots and transcripts. Tests sit beside source files as `*_test.go`. `docs/PLAN.md` describes architecture and planned features; distinguish that roadmap from implemented behavior. `mygo.json` configures packaging; generated bundles and screenshots belong in ignored `build/`.
+bqbot is a Go desktop chat application using MyGo's system WebView and local agent CLIs. `web/` contains the embedded HTML, CSS, JavaScript, and Markdown renderer; `webview_app.go` provides the Go bridge. Root `view.go` and `phase*_view.go` retain the shared conversation state/reducer and legacy native views. Backend packages live in `internal/`: `driver` adapts engines; `harness` coordinates turns; `service` exposes authenticated local APIs; `mcp` implements tools; `store` persists data. Go tests sit beside sources as `*_test.go`; JavaScript tests live in `tests/`. `docs/PLAN.md` is the roadmap; `docs/WEBVIEW.md` describes the desktop frontend. Packaging uses `mygo.json`; generated artifacts belong in ignored `build/`.
 
 ## Build, Test, and Development Commands
 
@@ -12,12 +12,13 @@ Use the Go version declared in `go.mod` (currently 1.27.3).
 - `go build -o build/bqbot .`: compile the application binary.
 - `mygo build`: package the application using an installed MyGo CLI and `mygo.json`.
 - `go test ./internal/store`: run one affected package's tests; substitute `driver`, `harness`, or `mcp` as needed.
-- `go test . -run TestCreateChatDelete`: run a focused UI behavior test.
-- `mkdir -p build/shots` followed by `BQ_FRAMES=build/shots go test . -run TestChatFrames`: generate light/dark UI screenshots.
+- `go test . -run 'TestDesktop|TestWebFrontend'`: test the WebView bridge and embedded assets.
+- `node --test tests/markdown.test.mjs`: check Markdown rendering and HTML escaping.
+- `go test . -run TestCreateChatDelete`: run a legacy native UI behavior test.
 
 ## Coding Style & Naming Conventions
 
-Format changed Go files with `gofmt` (tab indentation). Follow existing lowercase package names, exported `CamelCase` identifiers, and unexported `camelCase` identifiers. Keep engine adapters in separate files under `internal/driver`. Preserve package boundaries and document exported behavior. No additional formatter or linter configuration is checked in.
+Format Go files with `gofmt` (tabs); use two-space indentation in frontend files. Follow lowercase package names, exported `CamelCase` identifiers, and unexported `camelCase` identifiers. Keep engine adapters in `internal/driver`. Preserve package boundaries and document exported behavior. No linter configuration is checked in.
 
 ## Testing Guidelines
 
