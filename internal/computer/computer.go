@@ -55,6 +55,9 @@ func (a Action) Validate() error {
 			return errors.New("unsupported key")
 		}
 	case "scroll":
+		if a.X < 0 || a.X > 32767 || a.Y < 0 || a.Y > 32767 {
+			return errors.New("scroll coordinates are out of range")
+		}
 		if a.Direction != "up" && a.Direction != "down" {
 			return errors.New("scroll must be up or down")
 		}
@@ -73,6 +76,11 @@ type Result struct {
 // Execute assumes the caller has authorized this individual action. Host consent
 // and connection enablement are checked again here, including for screenshots.
 func Execute(ctx context.Context, c store.ComputerConfig, a Action) (Result, error) {
+	return ExecuteWithHost(ctx, c, a, nil)
+}
+
+// ExecuteWithHost also supports the driver owned by the desktop process.
+func ExecuteWithHost(ctx context.Context, c store.ComputerConfig, a Action, host *Host) (Result, error) {
 	if e := c.Validate(); e != nil {
 		return Result{}, e
 	}
@@ -84,6 +92,9 @@ func Execute(ctx context.Context, c store.ComputerConfig, a Action) (Result, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
+	if c.Provider == "host" && c.URL == "" {
+		return cuaAction(ctx, host.call, a)
+	}
 	token := ""
 	if c.TokenEnv != "" {
 		token = os.Getenv(c.TokenEnv)
@@ -194,6 +205,10 @@ func cua(ctx context.Context, c store.ComputerConfig, token string, a Action) (R
 		return Result{}, errors.New("cannot initialize Cua MCP connection")
 	}
 	defer client.Close()
+	return cuaAction(ctx, client.Call, a)
+}
+
+func cuaAction(ctx context.Context, call func(context.Context, string, json.RawMessage) (json.RawMessage, error), a Action) (Result, error) {
 	name := ""
 	args := map[string]any{"scope": "desktop", "delivery_mode": "foreground"}
 	switch a.Kind {
@@ -210,14 +225,16 @@ func cua(ctx context.Context, c store.ComputerConfig, token string, a Action) (R
 		args["text"] = a.Text
 	case "key":
 		name = "press_key"
-		args["key"] = a.Key
+		args["key"] = strings.ReplaceAll(a.Key, "_", "")
 	case "scroll":
 		name = "scroll"
 		args["direction"] = a.Direction
 		args["amount"] = 3
+		args["x"] = a.X
+		args["y"] = a.Y
 	}
 	input, _ := json.Marshal(args)
-	raw, e := client.Call(ctx, name, input)
+	raw, e := call(ctx, name, input)
 	if e != nil {
 		return Result{}, errors.New("Cua desktop action failed")
 	}

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"bqbot/internal/computer"
 	"bqbot/internal/driver"
 	"bqbot/internal/mcp"
 	"bqbot/internal/store"
@@ -46,6 +47,8 @@ type Update struct {
 // Harness runs turns. Configure Drivers and OnUpdate before submitting work;
 // use Subscribe for concurrently attaching and detaching consumers.
 type Harness struct {
+	// Host is configured before admitting work, only by the owning desktop.
+	Host          *computer.Host
 	Store         *store.Store
 	Drivers       map[string]driver.Driver
 	OnUpdate      func(Update)

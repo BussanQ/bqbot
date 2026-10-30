@@ -16,6 +16,17 @@ type ComputerRequest struct {
 }
 
 func (s *Server) computerRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/computer-host", func(w http.ResponseWriter, r *http.Request) {
+		result(w, s.h.Host.Status(), nil)
+	})
+	mux.HandleFunc("POST /v1/computer-host/start", func(w http.ResponseWriter, r *http.Request) {
+		err := s.h.Host.Start(r.Context())
+		result(w, s.h.Host.Status(), err)
+	})
+	mux.HandleFunc("POST /v1/computer-host/stop", func(w http.ResponseWriter, r *http.Request) {
+		s.h.Host.Stop()
+		result(w, s.h.Host.Status(), nil)
+	})
 	mux.HandleFunc("GET /v1/computers", func(w http.ResponseWriter, r *http.Request) { v, e := s.h.Store.Computers(); result(w, v, e) })
 	mux.HandleFunc("PUT /v1/computers", func(w http.ResponseWriter, r *http.Request) {
 		var v store.ComputerConfig
@@ -50,10 +61,23 @@ func (s *Server) computerRoutes(mux *http.ServeMux) {
 			fail(w, invalid(e.Error()))
 			return
 		}
-		out, e := computer.Execute(r.Context(), cfg, v.Action)
+		out, e := computer.ExecuteWithHost(r.Context(), cfg, v.Action, s.h.Host)
 		result(w, out, e)
 	}))
 }
+func (c *Client) HostStatus() (v computer.HostStatus, e error) {
+	e = c.do("GET", "/v1/computer-host", nil, &v)
+	return
+}
+func (c *Client) StartHost() (v computer.HostStatus, e error) {
+	e = c.do("POST", "/v1/computer-host/start", struct{}{}, &v)
+	return
+}
+func (c *Client) StopHost() (v computer.HostStatus, e error) {
+	e = c.do("POST", "/v1/computer-host/stop", struct{}{}, &v)
+	return
+}
+
 func (c *Client) Computers() (v []store.ComputerConfig, e error) {
 	e = c.do("GET", "/v1/computers", nil, &v)
 	return

@@ -24,7 +24,8 @@ func (h *Harness) prepareComputer(t *turn, g *externalGroup) error {
 		if e := config.Validate(); e != nil {
 			return e
 		}
-		tool := mcpgateway.Tool{Name: "computer", Description: "Use this bot's configured desktop. Each action requires the normal tool approval. screenshot captures the screen; click uses pixel coordinates; type inserts text; key accepts Return, Tab, Escape, BackSpace, arrows, Home, End, Page_Up, Page_Down, space; scroll accepts up/down.", InputSchema: json.RawMessage(`{"type":"object","properties":{"kind":{"type":"string","enum":["screenshot","click","type","key","scroll"]},"x":{"type":"integer","minimum":0,"maximum":32767},"y":{"type":"integer","minimum":0,"maximum":32767},"text":{"type":"string","maxLength":8192},"key":{"type":"string"},"direction":{"type":"string","enum":["up","down"]}},"required":["kind"],"additionalProperties":false}`)}
+		tool := mcpgateway.Tool{Name: "computer", Description: "Use this bot's configured desktop. Each action requires the normal tool approval. screenshot captures the screen; click uses pixel coordinates; type inserts text; key accepts Return, Tab, Escape, BackSpace, arrows, Home, End, Page_Up, Page_Down, space; scroll accepts up/down and screenshot x/y coordinates.", InputSchema: json.RawMessage(`{"type":"object","properties":{"kind":{"type":"string","enum":["screenshot","click","type","key","scroll"]},"x":{"type":"integer","minimum":0,"maximum":32767},"y":{"type":"integer","minimum":0,"maximum":32767},"text":{"type":"string","maxLength":8192},"key":{"type":"string"},"direction":{"type":"string","enum":["up","down"]}},"required":["kind"],"additionalProperties":false}`)}
+		bindHost := h.Host.BindSession()
 		g.tools["external_computer"] = externalTool{tool: tool, invoke: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
 			// Configuration is read after approval. Disabling or changing the desktop
 			// while a tool is awaiting permission cannot grant access to a different one.
@@ -44,7 +45,7 @@ func (h *Harness) prepareComputer(t *turn, g *externalGroup) error {
 			if dec.Decode(new(any)) != io.EOF {
 				return nil, errors.New("invalid computer action")
 			}
-			out, e := computer.Execute(ctx, current, action)
+			out, e := computer.ExecuteWithHost(bindHost(ctx), current, action, h.Host)
 			if e != nil {
 				return nil, e
 			}

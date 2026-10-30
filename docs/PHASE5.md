@@ -6,7 +6,8 @@
 
 - **Boat**：API 地址使用 `https://boat.dev/api/v1`，填写已有的 Sandbox ID 和 API token 的环境变量名。Sandbox 必须处于可用状态，运行 X11 桌面并安装 `scrot`、`xdotool`。bqbot 不自动创建、收费、恢复或销毁云机器。
 - **VM**：填写已有 Cua Driver 的 Streamable HTTP MCP 地址；可以使用 HTTPS，或通过 SSH 端口转发使用字面量回环 HTTP 地址。VM 的创建、启动和系统安装由现有虚拟化软件负责。
-- **宿主机**：使用 Cua Driver 的本机 MCP 地址（如 `http://127.0.0.1:端口/mcp`），显式开启宿主授权。Cua Driver 仍需要操作系统允许屏幕录制和辅助功能控制。
+- **这台电脑（内置）**：macOS 13+ 的安装包随附 Cua Driver 0.28.2，无需填写 MCP 地址、安装独立服务或配置凭据。勾选宿主访问后，在「本机驱动与系统权限」中请求辅助功能和屏幕录制权限，再启动驱动。权限仅通过显式点击申请；授权后可能需要重启驱动或应用。Windows/Linux 暂不提供内置本机控制，仍可连接云桌面和 VM。
+- **旧本机 HTTP 配置**：保留原有回环 MCP 地址，只有明确勾选迁移到内置驱动后才清空连接字段。
 
 凭据只保存环境变量名，值在 Go 中读取。配置写入 `computers.json`（0600）。远程地址不允许 URL 用户信息、查询串或 fragment；HTTP 仅允许字面量回环地址，宿主类型始终限制回环地址。
 
@@ -26,10 +27,17 @@ Boat 使用公开 v1 API 的 `POST /sandboxes/{id}/commands` 与 `GET /sandboxes
 
 Cua 使用标准 MCP initialize 和 tools/call，调用 `get_desktop_state`、`click`、`type_text`、`press_key`、`scroll`，屏幕操作作用域为 desktop。截图要求 Cua 返回 MCP image content。不同 Cua 版本若仅返回文件路径或 JSON 文本截图，会明确报错，不会读取返回的任意本机路径。
 
+内置驱动由 GUI 进程直接启动，使用私有 0700 临时目录和 0600 Unix socket；内部仍使用 MCP，但用户无需部署 MCP 服务。驱动以 standard 权限模式运行，不继承凭据或权限绕过环境变量，不自动下载或重放失败操作。父进程保活管道关闭时驱动退出；停止也会取消正在执行的调用。驱动重启会使旧轮次的待批操作失效。
+
+独立 `bqbot serve` 不提供内置本机控制；桌面附着到独立服务时需要退出该服务并从桌面启动。开发运行先执行 `python3 -I scripts/prepare-cua.py`，开发驱动校验固定 SHA-256，安装包校验应用签名。完整打包与许可信息见 [发布说明](RELEASE.md)。
+
 本地管理接口沿用主服务鉴权：
 
 | 接口 | 用途 |
 |---|---|
+| `GET /v1/computer-host` | 驱动可用性、运行状态及系统权限 |
+| `POST /v1/computer-host/start` | 显式启动内置驱动 |
+| `POST /v1/computer-host/stop` | 停止驱动并取消调用 |
 | `GET /v1/computers` | 读取非秘密连接配置 |
 | `PUT /v1/computers` | 保存配置及显式启用状态 |
 | `POST /v1/computers/{bot}/action` | 用户操作；非截图动作要求 `confirmed: true` |
@@ -40,9 +48,11 @@ Cua 使用标准 MCP initialize 和 tools/call，调用 `get_desktop_state`、`c
 
 定向测试覆盖 Boat 命令、截图下载及临时文件清理、输入引用、Cua MCP 图像、宿主显式授权、关闭后拒绝、动作与图片验证，以及 Bot 审批前不连接、审批期间配置撤销、consult 无工具。适配器和审批测试通过竞态检测。
 
-Boat 账号及真实 Sandbox、真实 Cua Driver / VM / 系统录屏与辅助功能权限未在当前开发环境实测；测试使用本机模拟服务。此阶段提供连接既有桌面的实现，未实现 VM 生命周期管理或自动安装 Cua Driver。
+定向测试另覆盖内置驱动并发启动合并、启动中停止、退出清理、停止取消调用、重启使旧审批失效、宿主身份拒绝、环境隔离、无界面服务拒绝本机控制、旧 HTTP 配置显式迁移及打包归档篡改/路径校验。真实 WebView 已验证驱动状态与缺少权限时拒绝启动；实际 0.28.2 二进制已验证 MCP 握手、只读权限查询、私有 socket 和父进程保活退出。完整 `.app` 已构建并通过签名校验。
+
+当前环境没有授予屏幕录制和辅助功能权限，未验证真实截图或鼠标键盘输入，也未自动申请权限。Boat 账号、真实 VM、正式签名公证和 macOS 13 实机兼容性仍需验收。应用不管理 VM 生命周期。
 
 协议依据：
 
 - [Boat Public API v1 OpenAPI](https://docs.boat.dev/openapi/boat-v1.yaml)
-- [Cua Driver 0.12.6 工具模式样本](https://github.com/milind-soni/OpenMausBot/blob/main/electron/fixtures/cua-driver-lent-tool-schemas.json)
+- [Cua Driver 0.28.2 嵌入协议](https://github.com/trycua/cua/blob/cua-driver-rs-v0.28.2/libs/cua-driver/rust/Skills/cua-driver/EMBEDDING.md)

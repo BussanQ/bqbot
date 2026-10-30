@@ -2,7 +2,11 @@
 package webgo
 
 import (
+	"log"
+	"runtime"
+
 	"bqbot/internal/service"
+	"bqbot/resources"
 	"bqbot/web"
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/updater"
@@ -22,6 +26,12 @@ func Run(api *service.Client) error {
 	mygo.SetFrontend(web.Assets)
 	mygo.Bind(desktop)
 	mygo.App.WhenReady(func() {
+		// Bare development binaries have no app bundle supplying a Dock icon.
+		if runtime.GOOS == "darwin" {
+			if err := mygo.App.Dock.SetIcon(resources.Icon); err != nil {
+				log.Printf("set Dock icon: %v", err)
+			}
+		}
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:                "bqbot",
 			Width:                1200,

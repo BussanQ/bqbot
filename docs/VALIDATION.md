@@ -42,6 +42,15 @@ go run github.com/egoist/mygo/cmd/mygo@v0.7.1 build -platform darwin/arm64
 
 生成 `build/darwin-arm64/bqbot.app` 和 `bqbot-0.1.0-arm64.dmg`。当前为开发 ad-hoc 签名，没有 Developer ID 公证、没有签名更新产物，也没有外部发布。生产步骤见 [发布说明](RELEASE.md)。
 
+## 内置本机控制补充验收
+
+- Cua Driver 固定为 0.28.2；实际官方归档与二进制 SHA-256 已核验，6 项打包脚本测试通过。
+- 内置驱动生命周期、取消、并发启动、旧审批失效、环境隔离、身份检查及无界面服务拒绝测试通过（race）；4 项电脑前端测试通过。
+- 真实 WebView 打开本机驱动面板，显示驱动可用，辅助功能和屏幕录制均未授权；启动被阻止，未触发权限弹窗。聊天截图位于 `build/host-smoke/`；CapturePage 对原生 dialog 的限制仍适用。
+- 实际驱动只读探测通过：MCP initialize/tools/list/check_permissions/health_report、0700 目录/0600 socket、关闭父进程保活管道后退出。探测脚本的父进程为 Python，health_report 正确报告其身份与 bqbot 不匹配；这不等于 GUI 宿主身份的授权后实测。
+- `go run github.com/egoist/mygo/cmd/mygo@v0.7.1 build -skip-dmg` 生成包含驱动的 `.app`；主应用与内置二进制 `codesign --verify --strict` 通过。Windows/Linux amd64 交叉编译通过。
+- 尚未实测已授权 GUI 中的截图/输入、生产签名公证、macOS 13 旧系统。使用步骤见 [电脑说明](PHASE5.md)。
+
 ## 仍需外部环境验收
 
 - Composio 授权与系统钥匙串，真实 CLI/云模型、外部 MCP 提供商。

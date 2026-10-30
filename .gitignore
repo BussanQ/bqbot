@@ -1,6 +1,7 @@
 .DS_Store
 .agent/
 build/
+resources/darwin/cua-driver/
 .env
 .env.*
 !.env.example

@@ -93,7 +93,7 @@
 
 详见 [阶段 5](PHASE5.md)。
 
-- [x] Boat 云桌面、已有本地/远程 VM 的 Cua MCP、显式授权的宿主 Cua。
+- [x] Boat 云桌面、已有本地/远程 VM 的 Cua MCP、macOS 内置 Cua Driver 及权限引导；本机无需部署 MCP 服务。
 - [x] 实时截图、鼠标键盘输入、截图折叠进 transcript；Bot 操作复用每轮审批，consult 禁用。
 - [ ] 真实云桌面与 VM/宿主权限验收。VM 生命周期由现有虚拟机工具管理，应用不负责创建或启动 VM。
 

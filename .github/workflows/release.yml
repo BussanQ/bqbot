@@ -36,6 +36,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Test bundled driver preparation
+        run: python3 -I tests/prepare_cua_test.py
       - name: Install Windows packaging tools
         if: matrix.platform == 'windows'
         run: sudo apt-get update && sudo apt-get install -y nsis osslsigncode
@@ -64,6 +66,23 @@ jobs:
           MYGO_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           RELEASE_TARGETS: ${{ matrix.targets }}
         run: go run github.com/egoist/mygo/cmd/mygo@v0.7.1 build -platform "$RELEASE_TARGETS"
+      - name: Verify macOS app and embedded driver signatures
+        if: matrix.platform == 'darwin'
+        run: |
+          python3 -I - <<'PY'
+          from pathlib import Path
+          import subprocess
+          apps = list(Path('build').rglob('*.app'))
+          if not apps:
+              raise SystemExit('No macOS application bundle produced')
+          for app in apps:
+              resources = app / 'Contents/Resources/cua-driver'
+              for name in ('cua-driver', 'manifest.json', 'LICENSE', 'NOTICE.md'):
+                  if not (resources / name).is_file():
+                      raise SystemExit('Missing bundled Cua resource: ' + name)
+              subprocess.run(['codesign', '--verify', '--strict', str(resources / 'cua-driver')], check=True)
+              subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: bqbot-${{ matrix.platform }}

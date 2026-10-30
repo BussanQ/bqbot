@@ -1,6 +1,6 @@
 # 发布与更新
 
-应用沿用 MyGo v0.7.1 打包；`mygo.json` 定义应用标识、版本、macOS 麦克风/语音识别说明与 Linux 桌面入口。没有分析 SDK、统计请求或设备追踪。签名更新使用 MyGo 的 Ed25519 验签和安装 UI，默认不自动检查；用户可从设置中的「检查更新」主动开启检查。
+应用沿用 MyGo v0.7.1 打包；`mygo.json` 定义应用标识、版本、macOS 麦克风/语音识别说明与 Linux 桌面入口。macOS 最低版本为 13.0，与内置 Cua Driver 的两个 Mach-O 架构及上游发布配置一致。没有分析 SDK、统计请求或设备追踪。签名更新使用 MyGo 的 Ed25519 验签和安装 UI，默认不自动检查；用户可从设置中的「检查更新」主动开启检查。
 
 ## 本地构建
 
@@ -10,6 +10,29 @@ go run github.com/egoist/mygo/cmd/mygo@v0.7.1 build -platform darwin/arm64
 ```
 
 macOS 生成 `.app` 与 DMG；Windows 生成 EXE 安装器（需 NSIS）；Linux 生成 deb 和归档。macOS 签名、公证和 DMG 需要 macOS。默认开发配置不包含更新公钥或发布源，只生成开发构建，不能声称已经可以安全分发给其他电脑。
+
+## 内置本机驱动
+
+macOS 安装包内置 Cua Driver **0.28.2**（`cua-driver-rs-v0.28.2`）的 universal CLI，用户无需安装 Cua、Python、Node 或单独运行 MCP 服务。运行时不联网下载驱动；首次使用本机控制仍需在系统设置授予 bqbot 辅助功能和屏幕录制权限。Windows / Linux 当前不提供内置本机控制，也不会打包 macOS 驱动；其他聊天和远程电脑功能沿用各自支持范围。
+
+`mygo.json` 的 `buildCommand` 自动运行 `python3 -I scripts/prepare-cua.py`。构建机器需 Python 3.9+、curl 和首次下载的网络连接。脚本只下载固定官方 asset，检查固定大小及 SHA-256，在独立空临时目录中验证全部归档条目，拒绝路径穿越、符号/硬链接、重复条目和未知文件，仅复制独立 CLI。已有资源每次重新验证二进制、manifest 和许可证；损坏资源不能靠存在检查绕过校验。
+
+- 开发目录：`resources/darwin/cua-driver/`，包含 `cua-driver`、`manifest.json`、`LICENSE`、`NOTICE.md`，已加入 Git 忽略。
+- 安装包目录：`bqbot.app/Contents/Resources/cua-driver/`。MyGo 自动按 `resources/darwin` 平台过滤。
+- `manifest.json` 保存 `version`、`archive_sha256`、`binary_sha256` 和来源；固定校验值及许可证归属见 [第三方说明](../third_party/cua-driver/NOTICE.md)。
+- 普通 `go build` / `go run` 不触发 MyGo hook；需要测试本机控制时先运行 `python3 -I scripts/prepare-cua.py`。
+- 已离线取得官方归档时可传 `--archive /absolute/path/to/archive.tar.gz`；仍执行相同固定校验，不能替换版本或驱动。
+
+MyGo 的 buildCommand 不接收 `-platform`。原生构建默认按宿主系统准备；跨平台构建时显式设置同一目标列表，例如：
+
+```sh
+RELEASE_TARGETS=darwin/arm64,darwin/amd64 go run github.com/egoist/mygo/cmd/mygo@v0.7.1 build -platform darwin/arm64,darwin/amd64
+python3 -I tests/prepare_cua_test.py
+```
+
+发布 workflow 已传递 `RELEASE_TARGETS`。不要使用 `-skip-build-command` 跳过驱动准备。手动准备也可用 `--targets darwin/arm64`；未知平台/架构会明确报错，Windows / Linux 会输出不支持内置控制的说明。
+
+MyGo v0.7.1 会先为 Resources 中所有 Mach-O 代码签名，再签主 `.app`。正式构建使用应用的 Developer ID、hardened runtime 和时间戳，随后公证；开发构建可使用 ad-hoc。正式重签会改变二进制字节，manifest 的原始 hash 用于来源记录，不能用于拒绝合法重签的安装包；正式运行时应检查应用/嵌套代码签名，开发资源检查原始 hash。workflow 在上传前验证驱动和完整 app 的签名，并确认归属文件随包。该接线不代表生产证书、公证或真实旧版 macOS 已验收。
 
 ## 可审阅的发布流程
 

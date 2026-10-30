@@ -52,4 +52,22 @@ func TestComputerServiceRequiresExplicitHostConsentAndInputConfirmation(t *testi
 	if _, e = api.ComputerAction(bot.ID, ComputerRequest{Action: computer.Action{Kind: "screenshot"}}); e == nil {
 		t.Fatal("disabled screenshot allowed")
 	}
+	config.URL = ""
+	config.Enabled = true
+	if _, e = api.SaveComputer(config); e != nil {
+		t.Fatal(e)
+	}
+	status, e := api.HostStatus()
+	if e != nil || status.Available || status.Running || status.Error == "" {
+		t.Fatal("headless host status", status, e)
+	}
+	if _, e = api.StartHost(); e == nil {
+		t.Fatal("headless service launched host")
+	}
+	if _, e = api.StopHost(); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = api.ComputerAction(bot.ID, ComputerRequest{Action: computer.Action{Kind: "screenshot"}}); e == nil {
+		t.Fatal("headless native action allowed")
+	}
 }

@@ -5,8 +5,10 @@
   "out": "build",
   "slug": "bqbot",
   "publisher": "BussanQ",
+  "icon": "resources/icon.png",
+  "buildCommand": "python3 -I scripts/prepare-cua.py",
   "macos": {
-    "minimumSystemVersion": "12.0",
+    "minimumSystemVersion": "13.0",
     "infoPlist": {
       "NSMicrophoneUsageDescription": "用于你主动开启的语音听写和通话。",
       "NSSpeechRecognitionUsageDescription": "将你主动录入的语音转换为聊天文本。"

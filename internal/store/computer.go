@@ -29,6 +29,17 @@ func (c ComputerConfig) Validate() error {
 	if c.Provider != "boat" && c.Provider != "vm" && c.Provider != "host" {
 		return errors.New("computer provider must be boat, vm or host")
 	}
+	if c.Provider == "host" && c.Enabled && !c.HostConsent {
+		return errors.New("host control requires explicit consent")
+	}
+	// An empty host URL selects the bundled desktop-owned driver. Existing URLs
+	// keep their original target until the user explicitly migrates them.
+	if c.Provider == "host" && c.URL == "" {
+		if c.TokenEnv != "" || c.SandboxID != "" {
+			return errors.New("built-in host does not accept credentials or sandbox IDs")
+		}
+		return nil
+	}
 	u, e := url.Parse(c.URL)
 	if e != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("computer URL must not contain credentials, query or fragment")
@@ -39,9 +50,6 @@ func (c ComputerConfig) Validate() error {
 	}
 	if c.Provider == "host" && !local {
 		return errors.New("host Cua must use a literal loopback address")
-	}
-	if c.Provider == "host" && c.Enabled && !c.HostConsent {
-		return errors.New("host control requires explicit consent")
 	}
 	if c.TokenEnv != "" && !envIdentifier(c.TokenEnv) {
 		return errors.New("computer token must name an environment variable")

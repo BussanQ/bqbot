@@ -3,6 +3,9 @@ package webgo
 import (
 	"encoding/json"
 	"errors"
+	"runtime"
+
+	"github.com/egoist/mygo"
 
 	"bqbot/internal/computer"
 	"bqbot/internal/driver"
@@ -12,12 +15,13 @@ import (
 
 // ComputerAction exposes desktop operations without exposing service credentials.
 type ComputerAction struct {
-	Kind      string               `json:"kind"`
-	BotID     string               `json:"bot_id"`
-	ThreadID  string               `json:"thread_id"`
-	Config    store.ComputerConfig `json:"config"`
-	Action    computer.Action      `json:"action"`
-	Confirmed bool                 `json:"confirmed"`
+	Kind       string               `json:"kind"`
+	BotID      string               `json:"bot_id"`
+	ThreadID   string               `json:"thread_id"`
+	Config     store.ComputerConfig `json:"config"`
+	Action     computer.Action      `json:"action"`
+	Confirmed  bool                 `json:"confirmed"`
+	Permission string               `json:"permission"`
 }
 
 func (d *Desktop) Computer(r ComputerAction) (json.RawMessage, error) {
@@ -31,6 +35,28 @@ func (d *Desktop) Computer(r ComputerAction) (json.RawMessage, error) {
 	var v any
 	var e error
 	switch r.Kind {
+	case "host-status":
+		v, e = api.HostStatus()
+	case "host-start":
+		v, e = api.StartHost()
+	case "host-stop":
+		v, e = api.StopHost()
+	case "host-permissions":
+		mygo.RunOnMain(func() { v, e = computer.RequestHostPermissions() })
+	case "host-settings":
+		if runtime.GOOS != "darwin" {
+			return nil, errors.New("内置本机控制目前仅支持 macOS")
+		}
+		var pane string
+		switch r.Permission {
+		case "accessibility":
+			pane = "Privacy_Accessibility"
+		case "screen_recording":
+			pane = "Privacy_ScreenCapture"
+		default:
+			return nil, errors.New("unknown host permission")
+		}
+		e = mygo.Shell.OpenExternal("x-apple.systempreferences:com.apple.preference.security?" + pane)
 	case "computers":
 		v, e = api.Computers()
 	case "save-computer":

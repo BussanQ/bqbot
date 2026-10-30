@@ -72,7 +72,18 @@ func init() {
       await new Promise(r=>setTimeout(r,100));
     }
     if(!audioComplete)throw Error('audio did not finish');
-    return {titles,audioComplete};
+    click('#settings');await wait(()=>document.querySelector('[data-computer-home]'));click('[data-computer-home]');
+    await wait(()=>document.querySelector('[data-host]'));click('[data-host]');
+    await wait(()=>document.querySelector('[data-host-action="refresh"]'));
+    const host=await mygo.call('Desktop.Computer',{kind:'host-status'});
+    if(!host.available || host.version!=='0.28.2')throw Error('bundled host unavailable: '+JSON.stringify(host));
+    if(!host.permissions.accessibility || !host.permissions.screen_recording){
+      let blocked=false;try{await mygo.call('Desktop.Computer',{kind:'host-start'});}catch{blocked=true;}
+      if(!blocked)throw Error('host started without permissions');
+    }
+    await mygo.call('Desktop.Computer',{kind:'host-stop'});
+    click('#close-dialog');
+    return {titles,audioComplete,host};
   })()`
 		result, err := win.Page().EvalContext(ctx, script)
 		if err != nil {

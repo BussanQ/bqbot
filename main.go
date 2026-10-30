@@ -17,6 +17,7 @@ import (
 
 	"bqbot/internal/headless"
 
+	"bqbot/internal/computer"
 	"bqbot/internal/driver"
 	"bqbot/internal/harness"
 	"bqbot/internal/mcp"
@@ -65,6 +66,10 @@ func main() {
 		log.Fatal(err)
 	}
 	h := harness.New(st, &driver.Claude{}, &driver.Codex{}, &driver.Pi{}, &driver.Grok{}, &driver.OpenAI{}, &driver.Echo{})
+	if len(os.Args) == 1 {
+		h.Host = computer.NewHost()
+		defer h.Host.Close()
+	}
 	// Without the endpoint the bots still chat, but cannot ask each other.
 	if exe, err := os.Executable(); err != nil {
 		log.Printf("bot handoff is off: %v", err)

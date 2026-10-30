@@ -89,6 +89,10 @@ func Open(parent context.Context, config Config) (*Client, error) {
 	}
 	return c, nil
 }
+
+// Done is closed when the connection or its subprocess ends.
+func (c *Client) Done() <-chan struct{} { return c.ctx.Done() }
+
 func (c *Client) Close() {
 	c.cancel()
 	if c.stdin != nil {
