@@ -356,6 +356,11 @@ func (d *Desktop) OpenLink(raw string) error {
 	return mygo.Shell.OpenExternal(raw)
 }
 
+// WorkDir returns the bot's local working directory for display.
+func (d *Desktop) WorkDir(id string) (string, error) {
+	return d.app.api.WorkDir(id)
+}
+
 func (d *Desktop) OpenWorkDir(id string) error {
 	path, err := d.app.api.WorkDir(id)
 	if err != nil {

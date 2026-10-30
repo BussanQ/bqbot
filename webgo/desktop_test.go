@@ -147,6 +147,22 @@ func TestDesktopRoomsMemoriesAndSearch(t *testing.T) {
 	}
 }
 
+func TestDesktopWorkDir(t *testing.T) {
+	d, st := testDesktop(t)
+	desktopAction(t, d, WebAction{Kind: "save-bot", Bot: store.Bot{ID: "ada", Name: "Ada", Engine: "echo"}})
+	got, err := d.WorkDir("ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := st.WorkDir("ada")
+	if got != want {
+		t.Fatalf("work dir = %q, want %q", got, want)
+	}
+	if _, err := d.WorkDir("missing"); err == nil {
+		t.Fatal("unknown bot must not resolve a work dir")
+	}
+}
+
 func TestWebFrontendAssets(t *testing.T) {
 	for _, name := range []string{"index.html", "app.js", "style.css", "markdown.js"} {
 		data, err := fs.ReadFile(web.Assets, name)

@@ -53,6 +53,7 @@ let state = { bots: [], rooms: [], threads: {}, engines: [], unread: {} },
   showHidden = false,
   showClosed = false,
   detailsOpen = false;
+const workDirs = new Map();
 let refreshing = false,
   refreshAgain = false,
   refreshTimer,
@@ -228,7 +229,7 @@ function renderHeader() {
       ? niceTitle(meta)
       : title;
   $("conversation-header").innerHTML =
-    `${r ? `<span class="avatar">${icon("hash")}</span>` : avatar(b || { name: "B" })}<div><h1>${esc(title)}</h1><p><span class="status-dot"></span>${c?.closed ? "只读会话" : c?.busy ? "正在处理" : r ? `${r.members.length} 位伙伴 · ${r.reply_mode === "auto" ? "自动分配" : "负责人模式"}` : b ? `${esc(b.engine)} · ${esc(b.model || "默认模型")}` : "与灵感对话，和伙伴协作"}</p></div><div class="header-actions">${c ? `<span class="pill">${icon("lock")}本地存储</span><button class="icon-button" data-menu aria-label="更多操作">${icon("dots")}</button>` : ""}</div>`;
+    `${r ? `<span class="avatar">${icon("hash")}</span>` : avatar(b || { name: "B" })}<div><h1>${esc(title)}</h1><p><span class="status-dot"></span>${c?.closed ? "只读会话" : c?.busy ? "正在处理" : r ? `${r.members.length} 位伙伴 · ${r.reply_mode === "auto" ? "自动分配" : "负责人模式"}` : b ? `${esc(b.engine)} · ${esc(b.model || "默认模型")}` : "与灵感对话，和伙伴协作"}</p></div><div class="header-actions">${c ? `<button class="icon-button" data-menu aria-label="更多操作">${icon("dots")}</button>` : ""}</div>`;
 }
 function renderWelcome() {
   const c = state.conversation,
@@ -364,8 +365,17 @@ function renderInspector() {
     c = state.conversation;
   $("inspector").hidden = !detailsOpen || !c;
   if (!detailsOpen || !c) return;
+  if (!r && b && !workDirs.has(b.id)) {
+    workDirs.set(b.id, "");
+    bridge("WorkDir", b.id)
+      .then((dir) => {
+        workDirs.set(b.id, dir);
+        if (currentBot()?.id === b.id) renderInspector();
+      })
+      .catch(() => workDirs.delete(b.id));
+  }
   $("inspector").innerHTML =
-    `<div class="section-label"><span>${r ? "空间详情" : "关于这位伙伴"}</span><button class="icon-button" data-hide-details aria-label="关闭详情">${icon("close")}</button></div>${r ? `<span class="avatar large">${icon("hash")}</span>` : avatar(b, true)}<h3>${esc(r?.name || b?.name)}</h3><p>${esc(r?.instructions || b?.persona || "随时准备好，和你一起把事情做好。")}</p><div class="section-label">${r ? "协作配置" : "运行配置"}</div><div class="detail-row"><span>${r ? "负责人" : "引擎"}</span><strong>${esc(r ? botByID(r.lead_id)?.name : b?.engine)}</strong></div><div class="detail-row"><span>${r ? "参与伙伴" : "模型"}</span><strong>${esc(r ? r.members.map((id) => botByID(id)?.name || id).join("、") : b?.model || "默认模型")}</strong></div><div class="detail-row"><span>消息</span><strong>${c.messages?.length || 0} 条</strong></div>${!r ? `<div class="detail-row"><span>工具权限</span><strong>${{ ask: "逐次询问", "auto-edit": "自动编辑", "full-auto": "完全自动" }[b?.approval_mode || "ask"] || "逐次询问"}</strong></div>` : ""}<hr><button class="detail-action" data-edit>${icon("settings")}编辑${r ? "空间" : "伙伴"}</button><button class="detail-action" data-memories>${icon("memory")}对话记忆</button>${!r ? `<button class="detail-action" data-folder>${icon("folder")}打开工作目录</button><button class="detail-action" data-new-thread>${icon("compose")}新建对话</button>` : ""}`;
+    `<div class="section-label"><span>${r ? "空间详情" : "关于这位伙伴"}</span><button class="icon-button" data-hide-details aria-label="关闭详情">${icon("close")}</button></div>${r ? `<span class="avatar large">${icon("hash")}</span>` : avatar(b, true)}<h3>${esc(r?.name || b?.name)}</h3><p>${esc(r?.instructions || b?.persona || "随时准备好，和你一起把事情做好。")}</p><div class="section-label">${r ? "协作配置" : "运行配置"}</div><div class="detail-row"><span>${r ? "负责人" : "引擎"}</span><strong>${esc(r ? botByID(r.lead_id)?.name : b?.engine)}</strong></div><div class="detail-row"><span>${r ? "参与伙伴" : "模型"}</span><strong>${esc(r ? r.members.map((id) => botByID(id)?.name || id).join("、") : b?.model || "默认模型")}</strong></div><div class="detail-row"><span>消息</span><strong>${c.messages?.length || 0} 条</strong></div>${!r ? `<div class="detail-row"><span>工具权限</span><strong>${{ ask: "逐次询问", "auto-edit": "自动编辑", "full-auto": "完全自动" }[b?.approval_mode || "ask"] || "逐次询问"}</strong></div>${workDirs.get(b?.id) ? `<div class="detail-row"><span>工作目录</span><strong>${esc(workDirs.get(b.id))}</strong></div>` : ""}` : ""}<hr><button class="detail-action" data-edit>${icon("settings")}编辑${r ? "空间" : "伙伴"}</button><button class="detail-action" data-memories>${icon("memory")}对话记忆</button>${!r ? `<button class="detail-action" data-folder>${icon("folder")}打开工作目录</button><button class="detail-action" data-new-thread>${icon("compose")}新建对话</button>` : ""}`;
 }
 
 function field(label, name, value = "", options = {}) {

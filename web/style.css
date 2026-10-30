@@ -173,7 +173,7 @@ svg {
   width: 100%;
   padding: 11px 8px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
   margin-bottom: 12px;
   border-radius: 8px;
 }
@@ -228,7 +228,7 @@ kbd {
   align-items: center;
   justify-content: space-between;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 1px;
   margin: 0 10px 13px;
   font-weight: 600;
@@ -330,11 +330,11 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 14px;
 }
 .agent-meta {
   display: block;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 4px;
 }
@@ -355,7 +355,7 @@ kbd {
   width: calc(100% - 39px);
   margin-left: 39px;
   padding: 7px 8px;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--muted);
   text-align: left;
   border-left: 1px solid var(--line);
@@ -375,7 +375,7 @@ kbd {
   height: 12px;
 }
 .room-row {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--muted);
 }
 .room-row svg {
@@ -384,7 +384,7 @@ kbd {
 }
 .nav-empty {
   padding: 9px 10px;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--muted);
   line-height: 1.8;
 }
@@ -408,7 +408,7 @@ kbd {
   gap: 10px;
   border-radius: 7px;
   padding: 8px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--muted);
 }
 .local-status {
@@ -518,16 +518,6 @@ kbd {
   display: flex;
   gap: 5px;
   margin-left: auto;
-}
-.pill {
-  font-size: 10px;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  padding: 6px 9px;
-  border-radius: 20px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
 }
 .message-scroll {
   flex: 1;
@@ -664,7 +654,7 @@ kbd {
   border: 0;
   padding: 0 2px;
   line-height: 1.85;
-  font-size: 12px;
+  font-size: 14px;
   min-height: 48px;
   max-height: 150px;
 }
@@ -771,11 +761,11 @@ kbd {
   margin-bottom: 7px;
 }
 .message-heading strong {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
 }
 .message-heading time {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--muted);
 }
 .message-heading .icon-button {
@@ -807,7 +797,7 @@ kbd {
   color: var(--danger);
 }
 .markdown {
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.95;
   overflow-wrap: anywhere;
 }
@@ -821,14 +811,14 @@ kbd {
 .markdown h2,
 .markdown h3,
 .markdown h4 {
-  font-size: 16px;
+  font-size: 18px;
   line-height: 1.65;
   margin: 18px 0 9px;
   font-weight: 600;
 }
 .markdown h3,
 .markdown h4 {
-  font-size: 14px;
+  font-size: 16px;
 }
 .markdown ul,
 .markdown ol {
@@ -843,7 +833,7 @@ kbd {
 }
 .markdown code {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   background: var(--soft);
   padding: 2px 5px;
   border-radius: 4px;
@@ -874,11 +864,11 @@ kbd {
   padding: 5px 12px;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
   font-family: var(--mono);
 }
 .code-header button {
-  font-size: 9px;
+  font-size: 11px;
   padding: 3px 5px;
 }
 .markdown a {
@@ -897,7 +887,7 @@ kbd {
 .markdown table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 11px;
+  font-size: 13px;
   margin: 10px 0;
 }
 .markdown td,
@@ -910,7 +900,7 @@ kbd {
   background: var(--soft);
 }
 .tool-lines {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
   margin: 10px 0;
   border: 1px solid var(--line);
@@ -949,11 +939,11 @@ kbd {
 }
 .typing small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   margin-left: 7px;
 }
 .pending-message {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--muted);
   padding: 10px 14px;
   border: 1px dashed var(--line);
@@ -1327,6 +1317,7 @@ select,
 }
 .menu-list button {
   padding: 12px;
+  font-size: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   text-align: left;
@@ -1429,9 +1420,6 @@ select,
   }
   .suggestions {
     margin-top: 23px;
-  }
-  .header-actions .pill {
-    display: none;
   }
   .search-trigger kbd {
     display: none;
