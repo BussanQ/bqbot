@@ -40,6 +40,9 @@ const paths = {
   mic: "M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3M5 11a7 7 0 0 0 14 0M12 18v3",
   users: "M9 4a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7M2 20v-1a6 5 0 0 1 14 0v1M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14a6 5 0 0 1 4 5v1",
   phone: "M7 2h10v20H7zM11 18h2",
+  call: "M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2",
+  mute: "M11 5 6 9H3v6h3l5 4zM16 9l5 6M21 9l-5 6",
+  image: "M4 4h16v16H4zM9 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3M20 15l-5-5L5 20",
   refresh: "M20 11a8 8 0 1 0-2 6M20 5v6h-6",
   tool: "M14 6a4 4 0 0 0 5 5l-9 9a2 2 0 0 1-3-3l9-9a4 4 0 0 1-2-2M15 3l2 2",
   route: "M6 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4M18 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4M6 7v4a4 4 0 0 0 4 4h4a4 4 0 0 1 4 2",
@@ -154,7 +157,7 @@ function bottom() {
 }
 function resizeDraft() {
   $("draft").style.height = "auto";
-  $("draft").style.height = Math.min(150, $("draft").scrollHeight) + "px";
+  $("draft").style.height = Math.min(160, $("draft").scrollHeight) + "px";
 }
 
 function render() {

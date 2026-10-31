@@ -115,24 +115,34 @@
                 <div class="composer-toolbar">
                   <div class="composer-tools">
                     <button
-                      class="icon-button"
+                      type="button"
+                      class="icon-button composer-icon"
                       id="attach"
                       aria-label="添加图片"
                       title="添加图片"
                     >
-                      <span data-icon="plus"></span></button
-                    ><button id="model" class="model-button">
-                      <span class="status-dot"></span
-                      ><span id="model-name">默认模型</span
-                      ><span data-icon="chevron"></span></button
-                    ><select id="send-mode" aria-label="忙碌时的发送方式">
+                      <span data-icon="image"></span></button
+                    ><span class="composer-divider" aria-hidden="true"></span
+                    ><button type="button" class="icon-button composer-icon" id="dictate" aria-label="语音听写" title="语音听写">
+                      <span data-icon="mic"></span></button
+                    ><button type="button" class="icon-button composer-icon" id="voice-call" aria-label="开始或结束语音通话" title="开始或结束语音通话">
+                      <span data-icon="call"></span></button
+                    ><button type="button" class="icon-button composer-icon" id="voice-stop" aria-label="停止语音" title="停止播放并关闭麦克风">
+                      <span data-icon="mute"></span></button
+                    ><button type="button" class="icon-button composer-icon" id="computer-panel" aria-label="伙伴的电脑" title="伙伴的电脑">
+                      <span data-icon="monitor"></span>
+                    </button>
+                  </div>
+                  <div class="composer-actions">
+                    <select id="send-mode" aria-label="忙碌时的发送方式">
                       <option value="queue">加入队列</option>
                       <option value="steer">追加指令</option>
-                    </select>
-                    <button type="button" class="model-button" id="dictate" title="语音听写">听写</button>
-                    <button type="button" class="model-button" id="voice-call" title="开始或结束语音通话">通话</button>
-                    <button type="button" class="model-button" id="voice-stop" title="停止播放并关闭麦克风">停止语音</button>
-                    <button type="button" class="model-button" id="computer-panel" title="伙伴的电脑">电脑</button>
+                    </select
+                    ><button type="button" id="model" class="model-button">
+                      <span class="status-dot"></span
+                      ><span id="model-name">默认模型</span
+                      ><span data-icon="chevron"></span>
+                    </button>
                   </div>
                   <button class="send-button" id="send" aria-label="发送消息">
                     <span data-icon="up"></span></button
@@ -147,7 +157,7 @@
                 </div>
               </div>
               <div class="composer-hint">
-                <span><kbd>Enter</kbd> 发送 · <kbd>Shift Enter</kbd> 换行</span
+                <span><kbd>Enter</kbd> 发送 <kbd>Shift Enter</kbd> 换行</span
                 ><span>想法在这里，开始发生。</span>
               </div>
             </div>
