@@ -52,6 +52,7 @@ type Engine struct {
 	Available bool           `json:"available"`
 	Version   string         `json:"version"`
 	Models    []driver.Model `json:"models"`
+	Steering  bool           `json:"steering"`
 }
 
 // Listen starts a service on a literal loopback address (or localhost).
@@ -381,12 +382,11 @@ func (s *Server) engines(w http.ResponseWriter, r *http.Request) {
 			defer probes.Done()
 			d := s.h.Drivers[name]
 			cfg := settings[name]
-			bin := cfg.Path
-			if bin == "" {
-				bin = d.Binary()
-			}
-			e := Engine{Name: name, Available: true, Models: driver.Catalog(name, cfg)}
-			if bin != "" {
+			e := Engine{Name: name, Available: true, Models: driver.Catalog(name, cfg), Steering: driver.SupportsSteering(d)}
+			if bin := d.Binary(); bin != "" {
+				if cfg.Path != "" {
+					bin = cfg.Path
+				}
 				version, err := driver.Probe(r.Context(), bin)
 				e.Available = err == nil
 				e.Version = version

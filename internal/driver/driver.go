@@ -28,6 +28,9 @@ const (
 	EvBreak EventKind = "break"
 	// EvTool is a tool the agent started; Text describes it.
 	EvTool EventKind = "tool"
+	// EvToolResult replaces the preview for a call; EvToolDelta appends to it.
+	EvToolResult EventKind = "tool_result"
+	EvToolDelta  EventKind = "tool_delta"
 )
 
 // Event is one normalized runtime event.
@@ -35,6 +38,9 @@ type Event struct {
 	Kind   EventKind
 	Text   string
 	Cursor string
+	ToolID string     `json:",omitempty"`
+	Status ToolStatus `json:",omitempty"`
+	Output string     `json:",omitempty"`
 }
 
 // TurnInput is what a driver needs to run a turn.
@@ -73,6 +79,12 @@ type Driver interface {
 	// Run runs one turn, calling emit as events come, and returns when the
 	// turn ends. Cancelling ctx stops the turn.
 	Run(ctx context.Context, in TurnInput, emit func(Event)) error
+}
+
+// SupportsSteering reports whether the driver accepts text during an active turn.
+func SupportsSteering(d Driver) bool {
+	capable, ok := d.(interface{ SupportsSteering() bool })
+	return ok && capable.SupportsSteering()
 }
 
 // Probe reports whether bin is installed, with its version.

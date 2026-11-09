@@ -306,18 +306,7 @@ func (d *Codex) runRPC(ctx context.Context, in TurnInput, emit func(Event)) erro
 						Message string `json:"message"`
 					} `json:"error"`
 				} `json:"turn"`
-				Item struct {
-					ID      string `json:"id"`
-					Type    string `json:"type"`
-					Text    string `json:"text"`
-					Command string `json:"command"`
-					Server  string `json:"server"`
-					Tool    string `json:"tool"`
-					Query   string `json:"query"`
-					Changes []struct {
-						Path string `json:"path"`
-					} `json:"changes"`
-				} `json:"item"`
+				Item codexItem `json:"item"`
 			}
 			if err := json.Unmarshal(m.Params, &p); err != nil {
 				return fmt.Errorf("%w: invalid %s notification", ErrTurnFailed, m.Method)
@@ -337,25 +326,16 @@ func (d *Codex) runRPC(ctx context.Context, in TurnInput, emit func(Event)) erro
 			case "item/agentMessage/delta":
 				streamed[p.ItemID] = true
 				emitText(p.ItemID, p.Delta)
-			case "item/started":
-				switch p.Item.Type {
-				case "commandExecution":
-					emit(Event{Kind: EvTool, Text: "shell: " + clip(p.Item.Command, 80)})
-				case "mcpToolCall":
-					emit(Event{Kind: EvTool, Text: p.Item.Server + "." + p.Item.Tool})
-				case "webSearch":
-					emit(Event{Kind: EvTool, Text: "web_search: " + clip(p.Item.Query, 80)})
+			case "item/commandExecution/outputDelta", "item/fileChange/outputDelta":
+				if p.ItemID != "" && p.Delta != "" {
+					emit(Event{Kind: EvToolDelta, ToolID: p.ItemID, Output: p.Delta})
 				}
-			case "item/completed":
-				switch p.Item.Type {
-				case "agentMessage":
-					if !streamed[p.Item.ID] {
-						emitText(p.Item.ID, p.Item.Text)
-					}
-				case "fileChange":
-					for _, change := range p.Item.Changes {
-						emit(Event{Kind: EvTool, Text: "edit: " + clip(change.Path, 80)})
-					}
+			case "item/started", "item/completed":
+				done := m.Method == "item/completed"
+				if p.Item.Type == "agentMessage" && done && !streamed[p.Item.ID] {
+					emitText(p.Item.ID, p.Item.Text)
+				} else if event, ok := p.Item.toolEvent(done); ok {
+					emit(event)
 				}
 			case "error":
 				if !p.WillRetry && p.Error != nil {
@@ -376,6 +356,57 @@ func (d *Codex) runRPC(ctx context.Context, in TurnInput, emit func(Event)) erro
 			}
 		}
 	}
+}
+
+type codexItem struct {
+	ID, Type, Text, Command, Server, Tool, Query, Status string
+	AggregatedOutput                                     string
+	ExitCode                                             *int
+	Result                                               json.RawMessage
+	Error                                                *struct{ Message string }
+	Changes                                              []struct{ Path, Diff string }
+}
+
+func (item codexItem) toolEvent(done bool) (Event, bool) {
+	event := Event{Kind: EvTool, ToolID: item.ID}
+	failed := item.Status == "failed" || item.Status == "declined"
+	switch item.Type {
+	case "commandExecution":
+		event.Text = "shell: " + clip(item.Command, 80)
+		event.Output = item.AggregatedOutput
+		if item.ExitCode != nil && *item.ExitCode != 0 {
+			failed = true
+		}
+	case "mcpToolCall":
+		event.Text = item.Server + "." + item.Tool
+		output, toolFailed := MCPToolText(item.Result)
+		event.Output = output
+		failed = failed || toolFailed
+		if item.Error != nil {
+			failed = true
+			event.Output = strings.TrimSpace(event.Output + "\n" + item.Error.Message)
+		}
+	case "fileChange":
+		var paths, diffs []string
+		for _, change := range item.Changes {
+			paths = append(paths, change.Path)
+			if change.Diff != "" {
+				diffs = append(diffs, change.Path+"\n"+change.Diff)
+			}
+		}
+		event.Text = "edit: " + clip(strings.Join(paths, ", "), 80)
+		event.Output = strings.Join(diffs, "\n")
+	case "webSearch":
+		event.Text = "web_search: " + clip(item.Query, 80)
+	default:
+		return Event{}, false
+	}
+	if done {
+		event.Kind, event.Status = EvToolResult, resultStatus(failed)
+	} else {
+		event.Output = ""
+	}
+	return event, true
 }
 
 func codexInput(text string, attachments []Attachment) []map[string]any {

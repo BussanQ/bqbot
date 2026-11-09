@@ -7,6 +7,7 @@
 - `web/index.html`：页面骨架、语义标签和内容安全策略。
 - `web/style.css`：浅色 / 深色主题、布局、窄窗口适配和减少动画偏好。
 - `web/app.js`：会话导航、消息渲染、草稿、图片、审批和管理表单。
+- `web/agents.js`：Agent 接入列表、模型筛选、思考强度和追加指令的可用条件。
 - `web/tools.js`：MCP、Composio、自动任务、运行历史与 webhook 设置表单。
 - `web/computer.js`、`web/voice.js`、`web/team.js`、`web/remote.js`：电脑预览与控制、语音与听写、团队分享和远程配对。
 - `webgo/computer.go`、`webgo/voice.go`、`webgo/team.go`、`webgo/remote.go`：这些功能的封闭命令桥接；团队导出使用原生保存对话框。
@@ -25,7 +26,10 @@
 
 - `Enter` 发送，`Shift+Enter` 换行；中文输入法选词时不发送。
 - `⌘/Ctrl+K` 搜索，`⌘/Ctrl+N` 新建当前伙伴的对话。
-- 忙碌时可停止、排队或追加指令；切换会话保留本次运行中的草稿和附件。
+- 在空工作区或「添加 AI 伙伴」选择 Agent。本机 CLI 显示版本检测结果；点「需配置」可填写路径并重新检测。API 入口可配置服务地址、密钥环境变量名和模型；Echo 可直接离线试聊。CLI 检测只确认命令可运行，账号登录由对应 CLI 管理。
+- 在输入区点击 Agent / 模型按钮，可调整这位伙伴的模型、思考强度和工具权限。可筛选目录或输入自定义模型 ID。切换 Agent 或模型后会保留记录，下一轮用新引擎会话继续；设置适用于该伙伴的所有会话。
+- 忙碌时默认排队，待处理消息显示在输入区上方。Codex 和 Pi 在可以追加纯文本时显示「追加指令」，也可用 `⌘/Ctrl+Enter` 请求追加。切换对话保留本次运行中的草稿和附件。Agent 提问时可点选建议答案或自由输入，再按「提交回答」。
+- 展开回复下方的「工具与协作」可查看 CLI 和外部 MCP 工具的状态与文本输出。每次调用最多保留 8 KiB 预览，随消息保存。旧记录继续显示当时保存的活动名称。
 - 主题默认跟随系统，手动选择保存在 WebView 本地存储中。
 - 伙伴、会话、群聊、引擎设置、审批、记忆和搜索继续使用现有服务校验。
 - 图片通过原生文件选择器导入，保留已有数量、类型和大小限制。
@@ -44,12 +48,13 @@
 
 ## 定向验证
 
-以下定向测试与构建已在本次实现中执行；可使用相同命令复验。
+按改动范围选择以下命令复验：
 
 ```sh
 go test ./webgo -run 'TestDesktop|TestWebFrontend' -count=1
 node --test tests/markdown.test.mjs
+node --test tests/agents.test.mjs
 go build -o build/bqbot .
 ```
 
-Go 测试覆盖会话切换期间的发送归属、独立会话、只读关闭状态、群聊、记忆、搜索和嵌入资源。JavaScript 测试覆盖 Markdown 子集与 HTML 转义。视觉检查应使用实际 MyGo WebView，检查浅深色、窄窗口、长消息、表单和审批卡片；旧 `TestChatFrames` 只生成原生 UI 的截图。
+Go 测试覆盖会话切换期间的发送归属、独立会话、只读关闭状态、群聊、记忆、搜索和嵌入资源。JavaScript 测试覆盖 Markdown 渲染与转义、模型思考强度和运行中追加指令的条件。视觉检查应使用实际 MyGo WebView，检查浅深色、窄窗口、长消息、表单和审批卡片；旧 `TestChatFrames` 只生成原生 UI 的截图。

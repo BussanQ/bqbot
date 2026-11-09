@@ -16,6 +16,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"bqbot/internal/driver"
 	"bqbot/internal/store"
@@ -79,6 +80,60 @@ func doneUpdate(t *testing.T, ch <-chan Update, id string) Update {
 		if u.BotID == id && u.Done {
 			return u
 		}
+	}
+}
+
+func TestPersistInterleavedToolOutput(t *testing.T) {
+	h := testHarness(t, &testDriver{run: func(_ context.Context, _ driver.TurnInput, emit func(driver.Event)) error {
+		for _, e := range []driver.Event{
+			{Kind: driver.EvTool, ToolID: "a", Text: "read"},
+			{Kind: driver.EvTool, ToolID: "b", Text: "read"},
+			{Kind: driver.EvToolDelta, ToolID: "a", Output: "draft"},
+			{Kind: driver.EvToolResult, ToolID: "b", Status: driver.ToolFailed, Output: "file not found"},
+			{Kind: driver.EvToolResult, ToolID: "a", Status: driver.ToolCompleted, Output: "contents\n<img>"},
+			{Kind: driver.EvToolDelta, ToolID: "a", Output: "late duplicate"},
+			{Kind: driver.EvTool, ToolID: "c", Text: "shell"},
+			{Kind: driver.EvToolDelta, ToolID: "c", Output: strings.Repeat("界", 4000)},
+			{Kind: driver.EvTool, ToolID: "internal", Text: "mcp__bqbot__ask_bot"},
+			{Kind: driver.EvToolResult, ToolID: "internal", Status: driver.ToolCompleted, Output: "internal receipt"},
+			{Kind: driver.EvTool, Text: "legacy label"},
+		} {
+			emit(e)
+		}
+		return nil
+	}})
+	b := savedBot(t, h)
+	updates, unsub := h.Subscribe()
+	defer unsub()
+	if _, err := h.Send(b, "inspect"); err != nil {
+		t.Fatal(err)
+	}
+	var live *store.Message
+	for {
+		u := receive(t, updates)
+		if u.Event != nil && u.Event.Kind == driver.EvToolDelta && u.Event.ToolID == "a" {
+			live = u.Reply
+		}
+		if u.Done {
+			break
+		}
+	}
+	if live == nil || live.ToolResults[0] != (store.ToolResult{Status: driver.ToolRunning, Output: "draft"}) {
+		t.Fatalf("changed live snapshot: %+v", live)
+	}
+	rows, err := h.Store.Transcript(b.ID)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("transcript: %+v %v", rows, err)
+	}
+	reply := rows[1]
+	if reply.Text != "" || strings.Join(reply.Tools, "|") != "read|read|shell|legacy label" ||
+		reply.ToolResults[0] != (store.ToolResult{Status: driver.ToolCompleted, Output: "contents\n<img>"}) ||
+		reply.ToolResults[1] != (store.ToolResult{Status: driver.ToolFailed, Output: "file not found"}) {
+		t.Fatalf("outputs were lost, duplicated, or attached to the wrong call: %+v", reply)
+	}
+	pending := reply.ToolResults[2]
+	if pending.Status != driver.ToolUnconfirmed || !utf8.ValidString(pending.Output) || len(pending.Output) > 8192 || !strings.HasSuffix(pending.Output, "（输出已截断）") {
+		t.Fatalf("invalid unfinished tool preview: status=%s, bytes=%d", pending.Status, len(pending.Output))
 	}
 }
 

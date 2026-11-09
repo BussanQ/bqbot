@@ -114,6 +114,7 @@ type claudeLine struct {
 	Type      string `json:"type"`
 	Subtype   string `json:"subtype"`
 	SessionID string `json:"session_id"`
+	IsReplay  bool   `json:"isReplay"`
 	Event     *struct {
 		Type  string `json:"type"`
 		Delta *struct {
@@ -123,10 +124,14 @@ type claudeLine struct {
 	} `json:"event"`
 	Message *struct {
 		Content []struct {
-			Type  string         `json:"type"`
-			Text  string         `json:"text"`
-			Name  string         `json:"name"`
-			Input map[string]any `json:"input"`
+			Type      string          `json:"type"`
+			Text      string          `json:"text"`
+			Name      string          `json:"name"`
+			Input     map[string]any  `json:"input"`
+			ID        string          `json:"id"`
+			ToolUseID string          `json:"tool_use_id"`
+			Content   json.RawMessage `json:"content"`
+			IsError   bool            `json:"is_error"`
 		} `json:"content"`
 	} `json:"message"`
 	Result  string   `json:"result"`
@@ -170,11 +175,20 @@ func (p *claudeParser) line(b []byte) error {
 				}
 			case "tool_use":
 				p.sawTool = true
-				p.emit(Event{Kind: EvTool, Text: toolLabel(c.Name, c.Input)})
+				p.emit(Event{Kind: EvTool, ToolID: c.ID, Text: toolLabel(c.Name, c.Input)})
 			}
 		}
 		p.sawDelta = false
 		p.emit(Event{Kind: EvBreak})
+	case "user":
+		if m.Message != nil && !m.IsReplay {
+			for _, c := range m.Message.Content {
+				if c.Type == "tool_result" && c.ToolUseID != "" {
+					p.sawTool = true
+					p.emit(Event{Kind: EvToolResult, ToolID: c.ToolUseID, Status: resultStatus(c.IsError), Output: contentText(c.Content)})
+				}
+			}
+		}
 	case "result":
 		p.done = true
 		if m.SessionID != "" {

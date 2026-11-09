@@ -201,17 +201,29 @@ func (hd *handoff) serveExternalCall(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	stop := context.AfterFunc(from.ctx, cancel)
 	defer stop()
-	decision, err := hd.h.approval(ctx, from, driver.ApprovalRequest{ID: store.NewID(), Kind: "tool", Tool: "MCP: " + tool.tool.Name, Input: req.Arguments})
+	callID, label := "gateway:"+store.NewID(), "MCP: "+tool.tool.Name
+	hd.h.emit(from, driver.Event{Kind: driver.EvTool, ToolID: callID, Text: label})
+	decision, err := hd.h.approval(ctx, from, driver.ApprovalRequest{ID: store.NewID(), Kind: "tool", Tool: label, Input: req.Arguments})
 	if err != nil || decision.Outcome != "allow" {
-		reply(w, 200, "", errors.New("MCP tool permission denied"))
+		denied := errors.New("MCP tool permission denied")
+		hd.h.emit(from, driver.Event{Kind: driver.EvToolResult, ToolID: callID, Status: driver.ToolFailed, Output: denied.Error()})
+		reply(w, 200, "", denied)
 		return
 	}
-	hd.h.note(from, "MCP: "+tool.tool.Name)
 	var result json.RawMessage
 	if tool.invoke != nil {
 		result, err = tool.invoke(ctx, req.Arguments)
 	} else {
 		result, err = tool.client.Call(ctx, tool.tool.Name, req.Arguments)
 	}
+	output, failed := driver.MCPToolText(result)
+	status := driver.ToolCompleted
+	if err != nil {
+		output = err.Error()
+	}
+	if failed || err != nil {
+		status = driver.ToolFailed
+	}
+	hd.h.emit(from, driver.Event{Kind: driver.EvToolResult, ToolID: callID, Status: status, Output: output})
 	reply(w, 200, string(result), err)
 }

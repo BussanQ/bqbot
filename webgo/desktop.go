@@ -89,6 +89,8 @@ type webState struct {
 	Rooms        []store.Room              `json:"rooms"`
 	Threads      map[string][]store.Thread `json:"threads"`
 	Engines      []service.Engine          `json:"engines"`
+	Probing      bool                      `json:"probing"`
+	ProbeError   string                    `json:"probe_error,omitempty"`
 	Selected     string                    `json:"selected"`
 	Conversation *webConversation          `json:"conversation"`
 	Unread       map[string]int            `json:"unread"`
@@ -100,7 +102,7 @@ func (d *Desktop) State() (json.RawMessage, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	a := d.app
-	s := webState{Bots: a.bots, Rooms: a.rooms, Threads: a.botThreads, Engines: a.catalog, Selected: a.selected, Unread: map[string]int{}, Status: a.status}
+	s := webState{Bots: a.bots, Rooms: a.rooms, Threads: a.botThreads, Engines: a.catalog, Probing: a.probing, ProbeError: a.probeError, Selected: a.selected, Unread: map[string]int{}, Status: a.status}
 	var t *thread
 	if a.selectedRoom != "" {
 		t = a.roomConversation(a.selectedRoom)
@@ -275,6 +277,10 @@ func (d *Desktop) Action(r WebAction) (json.RawMessage, error) {
 		}
 	case "settings":
 		result, err = a.api.Settings()
+	case "probe-engines":
+		if !a.probing {
+			a.probeEngines()
+		}
 	case "save-settings":
 		err = a.api.SaveSettings(r.Settings)
 		if err == nil {

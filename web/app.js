@@ -4,6 +4,7 @@ import { createRemoteUI } from "./remote.js";
 import { createTeamUI } from "./team.js";
 import { createVoiceUI } from "./voice.js";
 import { createComputerUI } from "./computer.js";
+import { agentName, bindChatFields, canSteer, chatFields, hasTools, renderAgentDirectory } from "./agents.js";
 
 const paths = {
   plus: "M12 5v14M5 12h14",
@@ -74,6 +75,7 @@ let refreshing = false,
   messageSignature = "",
   navSignature = "",
   approvalSignature = "";
+let syncAgentFields;
 const drafts = new Map(),
   imageDrafts = new Map(),
   sending = new Set();
@@ -166,15 +168,20 @@ function render() {
     changed = key !== conversationKey;
   if (changed) {
     conversationKey = key;
+    $("send-mode").value = "queue";
     $("draft").value = drafts.get(key) || "";
     resizeDraft();
     messageSignature = "";
     approvalSignature = "";
     $("messages").replaceChildren();
+    $("approvals").replaceChildren();
   }
   renderNavigation();
   renderHeader();
   renderWelcome();
+  for (const directory of document.querySelectorAll("[data-agent-directory]"))
+    renderAgentDirectory(directory, state, icon);
+  if ($("dialog").open) syncAgentFields?.();
   renderMessages(changed);
   renderApprovals();
   renderComposer();
@@ -214,7 +221,7 @@ function renderNavigation() {
           const threads = selected
             ? (state.threads[b.id] || []).filter((t) => showClosed || !t.closed)
             : [];
-          return `<button class="agent-row ${selected ? "selected" : ""}" data-select="${esc(b.id)}" aria-current="${selected ? "page" : "false"}">${avatar(b)}<span class="agent-label"><span class="agent-name">${esc(b.name)}${b.pinned ? " ·" : ""}</span><span class="agent-meta">${esc(b.engine)}${b.hidden ? " · 已隐藏" : ""}</span></span>${unread ? '<span class="nav-dot" aria-label="未读"></span>' : ""}</button>${threads.length > 1 ? threads.map((t) => `<button class="thread-row ${conversationKey === t.id ? "active" : ""}" data-select="${esc(t.id)}">${icon(t.closed ? "archive" : "chat")}${esc(niceTitle(t))}${t.asker_id ? " ↗" : ""}</button>`).join("") : ""}`;
+          return `<button class="agent-row ${selected ? "selected" : ""}" data-select="${esc(b.id)}" aria-current="${selected ? "page" : "false"}">${avatar(b)}<span class="agent-label"><span class="agent-name">${esc(b.name)}${b.pinned ? " ·" : ""}</span><span class="agent-meta">${esc(agentName(b.engine))}${b.hidden ? " · 已隐藏" : ""}</span></span>${unread ? '<span class="nav-dot" aria-label="未读"></span>' : ""}</button>${threads.length > 1 ? threads.map((t) => `<button class="thread-row ${conversationKey === t.id ? "active" : ""}" data-select="${esc(t.id)}">${icon(t.closed ? "archive" : "chat")}${esc(niceTitle(t))}${t.asker_id ? " ↗" : ""}</button>`).join("") : ""}`;
         })
         .join("")
     : '<p class="nav-empty">添加一位伙伴，<br>开启你的第一段对话。</p>';
@@ -235,13 +242,20 @@ function renderHeader() {
     c = state.conversation,
     meta = currentMeta();
   const title = r?.name || b?.name || "你的 AI 工作空间";
+  $("conversation-header").hidden = !c;
   $("breadcrumb").textContent = r
     ? "协作空间"
     : meta && meta.id !== meta.bot_id
       ? niceTitle(meta)
       : title;
+  if (!c) return;
+  const engine = state.engines?.find((e) => e.name === b?.engine);
+  const missingCLI = !r && engine?.available === false && hasTools(engine.name);
+  const source = r ? `${r.members.length} 位伙伴 · ${r.reply_mode === "auto" ? "自动分配" : "负责人模式"}` : agentName(b?.engine) || "";
+  const status = c.closed ? "只读会话" : waitingForUser(c) || (c.busy ? "正在回复" :
+    missingCLI ? "未检测到 CLI" : "");
   $("conversation-header").innerHTML =
-    `${r ? `<span class="avatar">${icon("hash")}</span>` : avatar(b || { name: "B" })}<div><h1>${esc(title)}</h1><p><span class="status-dot"></span>${c?.closed ? "只读会话" : c?.busy ? "正在处理" : r ? `${r.members.length} 位伙伴 · ${r.reply_mode === "auto" ? "自动分配" : "负责人模式"}` : b ? `${esc(b.engine)} · ${esc(b.model || "默认模型")}` : "与灵感对话，和伙伴协作"}</p></div><div class="header-actions">${c ? `<button class="icon-button" data-menu aria-label="更多操作">${icon("dots")}</button>` : ""}</div>`;
+    `${r ? `<span class="avatar">${icon("hash")}</span>` : avatar(b || { name: "B" })}<div><h1>${esc(title)}</h1><p><span class="status-dot"></span>${esc([source, status].filter(Boolean).join(" · "))}</p></div><div class="header-actions">${missingCLI ? '<button class="secondary" data-repair-agent>配置 CLI</button>' : ""}<button class="icon-button" data-menu aria-label="更多操作">${icon("dots")}</button></div>`;
 }
 function renderWelcome() {
   const c = state.conversation,
@@ -250,12 +264,27 @@ function renderWelcome() {
   const empty = !(c?.messages?.length || c?.pending?.length || c?.busy);
   $("welcome").hidden = !empty;
   if (!empty) return;
+  if (!c) {
+    if (!$("welcome").querySelector("[data-agent-directory]"))
+      $("welcome").innerHTML = `<div class="welcome-emblem">${icon("chat")}</div><h2>选择 Agent，<em>开始对话</em></h2><p>选择这位伙伴使用的 Agent。还没安装 CLI，也可以用 Echo 试聊。</p><div data-agent-directory></div>`;
+    return;
+  }
   $("welcome").innerHTML =
     `<div class="welcome-emblem">${icon("spark")}</div><span class="eyebrow">A LITTLE SPACE FOR BIG IDEAS</span><h2>${b || r ? "新的对话，" : "你好，"}<br><em>${b || r ? "从一个想法开始。" : "让好想法发生。"}</em></h2><p>${r ? `这里是 ${esc(r.name)}。让不同的视角，在同一处相遇。` : b ? `和 ${esc(b.name)} 一起写作、探索、构建。<br>不必想得完整，从你此刻的问题开始。` : "把你信任的 AI 伙伴聚在一起。<br>一个安静、专注、属于你的工作空间。"}</p><div class="suggestions"><button class="suggestion" data-prompt="帮我梳理一个想法。请先问我几个问题，了解我的目标和目前的思路。">${icon("leaf")}<strong>整理一个想法</strong><small>让零散的灵感，有了方向</small></button><button class="suggestion" data-prompt="帮我写一份清晰、自然的内容。请先了解我的主题、读者和希望表达的观点。">${icon("pen")}<strong>一起写点什么</strong><small>把心里的话，好好说出来</small></button><button class="suggestion" data-prompt="帮我分析一个代码问题。请先询问技术栈、预期行为和我遇到的问题。">${icon("code")}<strong>解决一个问题</strong><small>从复杂的问题，找到下一步</small></button></div><div class="welcome-footnote">${icon("lock")}对话保存在本机 · 模型请求由所选引擎处理</div>`;
 }
+function toolLinesHTML(message) {
+  if (!message.tools?.length) return "";
+  const statuses = { running: "进行中", completed: "已完成", failed: "失败", unconfirmed: "未收到最终结果" };
+  const rows = message.tools.map((label, i) => {
+    const result = message.tool_results?.[i];
+    const status = statuses[result?.status];
+    return `<li><div class="tool-heading"><span>${esc(label)}</span>${status ? `<small class="tool-status" data-status="${esc(result.status)}">${status}</small>` : ""}</div>${result?.output ? `<pre class="tool-output" tabindex="0" aria-label="工具输出"><code>${esc(result.output)}</code></pre>` : ""}</li>`;
+  });
+  return `<details class="tool-lines"><summary>工具与协作 · ${rows.length} 项活动</summary><ul>${rows.join("")}</ul></details>`;
+}
 function messageHTML(m) {
   const b = botByID(m.bot_id) || currentBot() || { name: "伙伴" };
-  return `${m.role === "user" ? `<span class="avatar">${icon("user")}</span>` : avatar(b)}<div class="message-content"><div class="message-heading"><strong>${m.role === "user" ? "你" : esc(b.name)}</strong><time>${time(m.at)}</time><button class="icon-button" data-copy-message="${esc(m.id)}" aria-label="复制消息">${icon("copy")}</button>${m.role === "assistant" ? `<button class="model-button" data-speak-message="${esc(m.id)}" aria-label="朗读这条回复">朗读</button>` : ""}</div><div class="markdown">${markdown(m.text)}</div>${messageImagesHTML(m.attachments)}${m.tools?.length ? `<details class="tool-lines"><summary>工具与协作 · ${m.tools.length} 项活动</summary><ul>${m.tools.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></details>` : ""}</div>`;
+  return `${m.role === "user" ? `<span class="avatar">${icon("user")}</span>` : avatar(b)}<div class="message-content"><div class="message-heading"><strong>${m.role === "user" ? "你" : esc(b.name)}</strong><time>${time(m.at)}</time><button class="icon-button" data-copy-message="${esc(m.id)}" aria-label="复制消息">${icon("copy")}</button>${m.role === "assistant" ? `<button class="model-button" data-speak-message="${esc(m.id)}" aria-label="朗读这条回复">朗读</button>` : ""}</div><div class="markdown">${markdown(m.text)}</div>${messageImagesHTML(m.attachments)}${toolLinesHTML(m)}</div>`;
 }
 function messageImagesHTML(images = []) {
   const screenshots = images.filter((a) => a.name?.startsWith("computer-"));
@@ -294,7 +323,8 @@ function renderMessages(changed) {
       existing.delete(m.id);
       const html = messageHTML(m);
       if (el._html !== html) {
-        const toolsOpen = el.querySelector("details")?.open;
+        const toolsOpen = el.querySelector(".tool-lines")?.open;
+        const screenshotsOpen = el.querySelector(".computer-screenshots")?.open;
         el.className =
           "message " +
           (m.role === "user"
@@ -304,8 +334,8 @@ function renderMessages(changed) {
               : "assistant");
         el.innerHTML = html;
         el._html = html;
-        if (toolsOpen && el.querySelector("details"))
-          el.querySelector("details").open = true;
+        if (toolsOpen) el.querySelector(".tool-lines")?.setAttribute("open", "");
+        if (screenshotsOpen) el.querySelector(".computer-screenshots")?.setAttribute("open", "");
       }
       const atIndex = $("messages").children[index];
       if (atIndex !== el) $("messages").insertBefore(el, atIndex || null);
@@ -315,31 +345,50 @@ function renderMessages(changed) {
       .filter((p) => !messages.some((m) => m.id === p.id))
       .map(
         (p) =>
-          `<div class="pending-message"><small>等待处理</small>${esc(p.text)}${imagesHTML(p.attachments)}</div>`,
+          `<div class="pending-message"><small>已排队</small>${esc(p.text)}${imagesHTML(p.attachments)}</div>`,
       )
       .join("");
-    $("typing").hidden = !c?.busy;
     if (stick) requestAnimationFrame(bottom);
   }
+  $("typing").hidden = !c?.busy;
+  if (c?.busy) {
+    const text = waitingForUser(c) || (c.answering
+      ? `正在回答 ${c.answering}…` : `${currentRoom()?.name || currentBot()?.name || "Agent"} 正在回复…`);
+    if ($("turn-status").textContent !== text) $("turn-status").textContent = text;
+  }
+}
+function waitingForUser(c) {
+  if (!c.approvals?.length) return "";
+  return c.approvals.some((a) => a.request.kind === "question") ? "等待你回答" : "等待工具审批";
+}
+function currentTurnAcceptsSteering() {
+  const c = state.conversation;
+  const engine = state.engines?.find((e) => e.name === currentBot()?.engine);
+  return canSteer(c, engine, imageDrafts.get(c?.id));
 }
 function renderComposer() {
   const c = state.conversation,
     b = currentBot(),
     disabled = !c || c.closed;
+  const steerable = currentTurnAcceptsSteering();
+  $("composer-area").hidden = !c;
   $("draft").disabled = disabled;
   $("draft").placeholder = !c
     ? "添加 AI 伙伴，开始第一段对话。"
     : c.closed
       ? "这段会话为只读，可新建对话继续。"
       : c.busy
-        ? "继续补充想法，或发送追加指令…"
-        : "写下你的想法，让我们一起完成。";
+        ? (steerable ? "加入队列，或向当前轮次追加指令…" : "继续输入，消息会加入队列…")
+        : `发消息给 ${currentRoom()?.name || b?.name || "伙伴"}…`;
   $("attach").disabled = disabled;
-  $("model").disabled = !b || !!c?.room_id;
+  $("model").disabled = disabled || !b || !!c?.room_id;
   $("model-name").textContent = currentRoom()
     ? "团队协作"
-    : b?.model || b?.engine || "默认模型";
-  $("send-mode").hidden = !c?.busy || !!c?.room_id;
+    : [agentName(b?.engine), b?.model, b?.effort].filter(Boolean).join(" · ");
+  $("send-mode").hidden = !steerable;
+  if ($("send-mode").hidden) $("send-mode").value = "queue";
+  $("steer-hint").hidden = $("send-mode").hidden;
+  $("steer-hint").textContent = /Mac/i.test(navigator.platform) ? "⌘ Enter 追加指令" : "Ctrl Enter 追加指令";
   const hasDraft =
     !!$("draft").value.trim() || !!imageDrafts.get(conversationKey)?.length;
   $("send").disabled = disabled || !hasDraft || sending.has(conversationKey);
@@ -357,19 +406,21 @@ function renderApprovals() {
     sig = JSON.stringify(approvals);
   if (sig === approvalSignature) return;
   approvalSignature = sig;
-  // Preserve partially typed answers when another approval arrives.
-  const answers = new Map(
-    [...$("approvals").querySelectorAll("input")].map((el) => [
-      el.dataset.answer,
-      el.value,
-    ]),
-  );
-  $("approvals").innerHTML = approvals
-    .map(
-      ({ bot_id, request: r }) =>
-        `<section class="approval" data-approval="${esc(r.id)}" data-bot="${esc(bot_id)}"><h4>${esc(botByID(bot_id)?.name || "伙伴")} · ${r.kind === "question" ? "需要你的回答" : "请求使用 " + (r.tool || "工具")}</h4>${r.question ? `<p>${esc(r.question)}</p>` : ""}${r.input ? `<pre>${esc(JSON.stringify(r.input, null, 2))}</pre>` : ""}${r.kind === "question" ? `<input aria-label="你的回答" data-answer="${esc(r.id)}" placeholder="${esc((r.options || []).join(" / ") || "输入回答")}" value="${esc(answers.get(r.id) || "")}">` : ""}<div class="approval-actions"><button class="secondary" data-decision="deny">拒绝</button><button class="primary" data-decision="${r.kind === "question" ? "answer" : "allow"}">${r.kind === "question" ? "提交回答" : "允许本次"}</button></div></section>`,
-    )
-    .join("");
+  // Providers can reuse a question ID in different bots.
+  const key = (bot, id) => JSON.stringify([bot, id]);
+  const answers = new Map([...$("approvals").querySelectorAll("[data-answer]")].map((input) =>
+    [key(input.closest("[data-bot]").dataset.bot, input.dataset.answer), input.value]));
+  $("approvals").innerHTML = approvals.map(({ bot_id, request: r }) => {
+    const question = r.kind === "question";
+    const answer = answers.get(key(bot_id, r.id)) || "";
+    const options = (r.options || []).map((option) =>
+      `<button type="button" data-answer-choice="${esc(option)}" aria-pressed="${answer === option}">${esc(option)}</button>`).join("");
+    return `<section class="approval" data-approval="${esc(r.id)}" data-bot="${esc(bot_id)}">
+      <h4>${esc(botByID(bot_id)?.name || "伙伴")} · ${question ? "需要你的回答" : "请求使用 " + esc(r.tool || "工具")}</h4>
+      ${r.question ? `<p>${esc(r.question)}</p>` : ""}${!question && r.input ? `<pre>${esc(JSON.stringify(r.input, null, 2))}</pre>` : ""}
+      ${question ? `${options ? `<div class="answer-choices" role="group" aria-label="建议回答">${options}</div>` : ""}<input aria-label="你的回答" data-answer="${esc(r.id)}" placeholder="输入回答" value="${esc(answer)}">` : ""}
+      <div class="approval-actions"><button class="secondary" data-decision="deny">拒绝</button><button class="primary" data-decision="${question ? "answer" : "allow"}">${question ? "提交回答" : "允许本次"}</button></div></section>`;
+  }).join("");
 }
 function renderInspector() {
   const b = currentBot(),
@@ -387,7 +438,7 @@ function renderInspector() {
       .catch(() => workDirs.delete(b.id));
   }
   $("inspector").innerHTML =
-    `<div class="section-label"><span>${r ? "空间详情" : "关于这位伙伴"}</span><button class="close-button" data-hide-details aria-label="关闭详情" title="关闭详情">${icon("close")}</button></div>${r ? `<span class="avatar large">${icon("hash")}</span>` : avatar(b, true)}<h3>${esc(r?.name || b?.name)}</h3><p>${esc(r?.instructions || b?.persona || "随时准备好，和你一起把事情做好。")}</p><div class="section-label">${r ? "协作配置" : "运行配置"}</div><div class="detail-row"><span>${r ? "负责人" : "引擎"}</span><strong>${esc(r ? botByID(r.lead_id)?.name : b?.engine)}</strong></div><div class="detail-row"><span>${r ? "参与伙伴" : "模型"}</span><strong>${esc(r ? r.members.map((id) => botByID(id)?.name || id).join("、") : b?.model || "默认模型")}</strong></div><div class="detail-row"><span>消息</span><strong>${c.messages?.length || 0} 条</strong></div>${!r ? `<div class="detail-row"><span>工具权限</span><strong>${{ ask: "逐次询问", "auto-edit": "自动编辑", "full-auto": "完全自动" }[b?.approval_mode || "ask"] || "逐次询问"}</strong></div>${workDirs.get(b?.id) ? `<div class="detail-row"><span>工作目录</span><strong>${esc(workDirs.get(b.id))}</strong></div>` : ""}` : ""}<hr><button class="detail-action" data-edit>${icon("settings")}编辑${r ? "空间" : "伙伴"}</button><button class="detail-action" data-memories>${icon("memory")}对话记忆</button>${!r ? `<button class="detail-action" data-folder>${icon("folder")}打开工作目录</button><button class="detail-action" data-new-thread>${icon("compose")}新建对话</button>` : ""}`;
+    `<div class="section-label"><span>${r ? "空间详情" : "关于这位伙伴"}</span><button class="close-button" data-hide-details aria-label="关闭详情" title="关闭详情">${icon("close")}</button></div>${r ? `<span class="avatar large">${icon("hash")}</span>` : avatar(b, true)}<h3>${esc(r?.name || b?.name)}</h3><p>${esc(r?.instructions || b?.persona || "随时准备好，和你一起把事情做好。")}</p><div class="section-label">${r ? "协作配置" : "运行配置"}</div><div class="detail-row"><span>${r ? "负责人" : "引擎"}</span><strong>${esc(r ? botByID(r.lead_id)?.name : agentName(b?.engine))}</strong></div><div class="detail-row"><span>${r ? "参与伙伴" : "模型"}</span><strong>${esc(r ? r.members.map((id) => botByID(id)?.name || id).join("、") : b?.model || "默认模型")}</strong></div><div class="detail-row"><span>消息</span><strong>${c.messages?.length || 0} 条</strong></div>${!r ? `${hasTools(b?.engine) ? `<div class="detail-row"><span>工具权限</span><strong>${{ ask: "逐次询问", "auto-edit": "自动编辑", "full-auto": "完全自动" }[b?.approval_mode || "ask"] || "逐次询问"}</strong></div>` : ""}${workDirs.get(b?.id) ? `<div class="detail-row"><span>工作目录</span><strong>${esc(workDirs.get(b.id))}</strong></div>` : ""}` : ""}<hr><button class="detail-action" data-edit>${icon("settings")}编辑${r ? "空间" : "伙伴"}</button><button class="detail-action" data-memories>${icon("memory")}对话记忆</button>${!r ? `<button class="detail-action" data-folder>${icon("folder")}打开工作目录</button><button class="detail-action" data-new-thread>${icon("compose")}新建对话</button>` : ""}`;
 }
 
 function field(label, name, value = "", options = {}) {
@@ -405,6 +456,7 @@ function field(label, name, value = "", options = {}) {
 }
 function openDialog(title, body, onSubmit) {
   const generation = ++dialogGeneration;
+  syncAgentFields = null;
   $("dialog-body").onclick = null;
   $("dialog-title").textContent = title;
   $("dialog-error").hidden = true;
@@ -445,66 +497,36 @@ const settingsLinks = (items) =>
     .join("")}</div></section>`;
 const dialogActions = (label) =>
   `<div class="dialog-actions"><button type="button" class="secondary" data-cancel>取消</button><button type="submit" class="primary">${label}</button></div>`;
-function openBot(b) {
-  const original = b
-    ? structuredClone(b)
-    : {
-        engine:
-          state.engines.find((e) => e.available && e.name !== "echo")?.name ||
-          "echo",
-        approval_mode: "ask",
-      };
-  const engines = [
-    ...new Set([
-      original.engine,
-      ...state.engines.filter((e) => e.available).map((e) => e.name),
-      "echo",
-    ]),
-  ];
+function openAgentPicker() {
+  openDialog("选择 Agent", '<div data-agent-directory></div>');
+  renderAgentDirectory($("dialog-body").firstElementChild, state, icon);
+}
+
+function openBot(b, { engine, optionsOnly = false } = {}) {
+  if (!b && !engine) return openAgentPicker();
+  const original = b || { engine, name: agentName(engine), approval_mode: "ask" };
+  const profile = optionsOnly ? "" : field("伙伴名称", "name", original.name, { required: true, max: 120 });
+  const details = optionsOnly ? "" : `<details class="agent-profile-details"${b ? " open" : ""}><summary>伙伴资料</summary>
+    ${field("头像文字 / Emoji", "avatar", original.avatar, { max: 8, placeholder: "留空使用名字首字" })}
+    ${field("角色与工作方式", "persona", original.persona, { textarea: true })}</details>`;
+  const computer = b && !optionsOnly ? `<section class="menu-group settings-links"><h3>电脑</h3><div class="menu-items"><button type="button" data-bot-computer>${icon("monitor")}<span><strong>伙伴的电脑</strong><small data-computer-status>正在读取…</small></span>${icon("next")}</button></div></section><p class="form-help">配置电脑会离开此页面，未保存的伙伴修改不会保留。</p>` : "";
   openDialog(
-    b ? "编辑 AI 伙伴" : "认识一位新伙伴",
-    `<form>${field("名字", "name", original.name, { required: true, max: 120, placeholder: "给这位伙伴起个名字" })}<div class="form-row">${field("引擎", "engine", original.engine, { select: engines })}${field("头像文字 / Emoji", "avatar", original.avatar, { max: 8, placeholder: "留空使用名字首字" })}</div>${field("模型", "model", original.model, { placeholder: "留空使用引擎默认模型" })}<datalist id="model-options"></datalist><div class="form-row">${field("思考强度", "effort", original.effort || "", { select: [["", "默认"], "low", "medium", "high", "xhigh", "max"] })}${field(
-      "工具权限",
-      "approval_mode",
-      original.approval_mode || "ask",
-      {
-        select: [
-          ["ask", "逐次询问"],
-          ["auto-edit", "自动编辑"],
-          ["full-auto", "完全自动"],
-        ],
-      },
-    )}</div><p class="form-help">逐次询问会在操作前请求确认；自动编辑允许修改文件；完全自动允许工具操作。更改模型会为后续消息建立新会话。</p>${field("角色与工作方式", "persona", original.persona, { textarea: true })}${b ? `<section class="menu-group settings-links"><h3>电脑</h3><div class="menu-items"><button type="button" data-bot-computer>${icon("monitor")}<span><strong>伙伴的电脑</strong><small data-computer-status>正在读取…</small></span>${icon("next")}</button></div></section><p class="form-help">配置电脑会离开此页面，未保存的伙伴修改不会保留。</p>` : ""}${dialogActions(b ? "保存更改" : "添加伙伴")}</form>`,
+    optionsOnly ? `${b.name} · 对话选项` : b ? "编辑 AI 伙伴" : "添加 AI 伙伴",
+    `<form>${profile}${chatFields(field, original)}
+      ${b ? '<p class="form-help">此设置适用于这位伙伴的所有会话，从下一轮起生效。更换 Agent 或模型后会保留聊天记录，重新建立引擎会话。</p>' : ""}
+      ${details}${computer}${dialogActions(b ? "保存更改" : "创建并开始对话")}</form>`,
     async (data) => {
-      const bot = { ...original, ...Object.fromEntries(data) };
-      const engine = state.engines.find((e) => e.name === bot.engine);
-      const model = engine?.models?.find((m) => m.id === bot.model);
-      if (
-        model?.efforts?.length &&
-        bot.effort &&
-        !model.efforts.includes(bot.effort)
-      )
-        throw new Error("所选模型不支持该思考强度，请选择默认或支持的强度。");
+      const latest = b && botByID(b.id);
+      if (b && !latest) throw new Error("这位伙伴已删除，请重新选择。");
+      const bot = { ...(latest || original), ...Object.fromEntries(data) };
+      bot.name = bot.name.trim();
+      bot.model = bot.model.trim();
       await mutate({ kind: "save-bot", bot });
     },
   );
   const form = $("dialog-body").querySelector("form");
-  form.elements.model.setAttribute("list", "model-options");
-  const updateModels = () => {
-    $("model-options").innerHTML = (
-      state.engines.find((e) => e.name === form.elements.engine.value)
-        ?.models || []
-    )
-      .map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`)
-      .join("");
-  };
-  form.elements.engine.onchange = () => {
-    form.elements.model.value = "";
-    form.elements.effort.value = "";
-    updateModels();
-  };
-  updateModels();
-  if (!b) return;
+  syncAgentFields = bindChatFields(form, original, () => state.engines || []);
+  if (!computer) return;
   const status = form.querySelector("[data-computer-status]");
   computerUI
     .summary(b.id)
@@ -554,21 +576,18 @@ function openRoom(r) {
       }),
   );
 }
-async function openSettings() {
+async function openSettings(preferred, fromPicker = false) {
+  const generation = dialogGeneration;
   const settings = await action({ kind: "settings" });
-  const engines = [
-    ...new Set([
-      "claude",
-      "codex",
-      "pi",
-      "grok",
-      "openai",
-      ...state.engines.map((e) => e.name),
-    ]),
-  ].filter((e) => e !== "echo");
+  if (generation !== dialogGeneration) return;
+  const engines = (state.engines?.map((e) => e.name) || ["claude", "codex", "pi", "grok", "openai"]).filter((name) => name !== "echo");
+  let selected = preferred || engines[0];
+  const select = !preferred && engines.length ? field("选择 Agent", "engine", selected, {
+    select: engines.map((id) => [id, agentName(id)]),
+  }) : "";
   openDialog(
-    "引擎设置",
-    `<form>${field("选择引擎", "engine", engines[0], { select: engines })}<div id="engine-settings"></div><p class="form-help">使用环境变量名称配置 API 密钥。密钥本身不会保存在界面中。</p>${settingsLinks([
+    preferred ? `配置 ${agentName(preferred)}` : "引擎设置",
+    `<form>${select}<div id="engine-settings"></div>${preferred ? "" : settingsLinks([
       ["data-routing", "route", "群聊决策模型", "协作空间自动分配时使用的模型"],
       ["data-tools-home", "tool", "工具与自动化", "MCP 工具、定时任务与触发器"],
       ["data-computer-home", "monitor", "伙伴的电脑", "本机控制、云桌面与 VM"],
@@ -576,33 +595,35 @@ async function openSettings() {
       ["data-team-home", "users", "团队与分享", "导入、导出伙伴团队"],
       ["data-remote-home", "phone", "手机与远程访问", "在其他设备上继续对话"],
       ["data-update", "refresh", "检查更新", "获取 bqbot 的新版本"],
-    ])}${dialogActions("保存设置")}</form>`,
-    async (data) => {
+    ])}
+      ${fromPicker ? '<div class="dialog-actions"><button type="button" class="secondary" data-back-agents>返回列表</button><button type="submit" class="primary">保存并重新检测</button></div>' : selected ? dialogActions(preferred ? "保存并重新检测" : "保存设置") : ""}</form>`,
+    async () => {
       keep();
       await mutate({ kind: "save-settings", settings });
+      if (fromPicker && form.isConnected && $("dialog").open) openAgentPicker();
       notify("引擎设置已保存");
     },
   );
   const form = $("dialog-body").querySelector("form");
-  let selected = engines[0];
   const keep = () => {
-    const v = Object.fromEntries(new FormData(form));
-    settings[selected] = {
-      path: v.path || "",
-      base_url: v.base_url || "",
-      api_key_env: v.api_key_env || "",
-      models: (v.models || "")
-        .split(/[,\n]/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    };
+    if (!selected) return;
+    const cfg = { ...settings[selected] };
+    for (const key of ["path", "base_url", "api_key_env"]) {
+      if (form.elements[key]) cfg[key] = form.elements[key].value.trim();
+    }
+    cfg.models = form.elements.models.value.split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
+    settings[selected] = cfg;
   };
   const load = () => {
+    if (!selected) return;
     const s = settings[selected] || {};
-    $("engine-settings").innerHTML =
-      `${field("CLI 路径", "path", s.path, { placeholder: "留空自动从 PATH 查找" })}${field("API 地址", "base_url", s.base_url, { placeholder: "例如 https://api.openai.com/v1" })}${field("密钥环境变量", "api_key_env", s.api_key_env, { placeholder: "例如 OPENAI_API_KEY" })}${field("模型列表（逗号或换行分隔）", "models", (s.models || []).join("\n"), { textarea: true })}`;
+    const connection = selected === "openai"
+      ? `${field("API 地址", "base_url", s.base_url, { placeholder: "https://api.openai.com/v1" })}${field("密钥环境变量名称", "api_key_env", s.api_key_env, { placeholder: "OPENAI_API_KEY" })}<p class="form-help">密钥由本地服务从环境变量读取，只需在此填写变量名。</p>`
+      : `${field("CLI 路径", "path", s.path, { placeholder: `默认使用 PATH 中的 ${selected}` })}<p class="form-help">先在终端完成 CLI 安装和登录。如果已安装但未被检测到，可填写可执行文件的完整路径。</p>`;
+    $("engine-settings").innerHTML = connection +
+      field("模型列表（逗号或换行分隔）", "models", (s.models || []).join("\n"), { textarea: true });
   };
-  form.elements.engine.onchange = () => {
+  if (form.elements.engine) form.elements.engine.onchange = () => {
     keep();
     selected = form.elements.engine.value;
     load();
@@ -858,7 +879,7 @@ $("draft").addEventListener("input", () => {
   resizeDraft();
   renderComposer();
 });
-async function send() {
+async function send(steer = false) {
   const c = state.conversation;
   if (!c || c.closed || sending.has(c.id)) return;
   const key = c.id,
@@ -873,7 +894,7 @@ async function send() {
       ...scope(c),
       text,
       attachments,
-      mode: $("send-mode").value,
+      mode: currentTurnAcceptsSteering() && (steer || $("send-mode").value === "steer") ? "steer" : "queue",
     });
     // Preserve edits made while the service admitted this message.
     if (drafts.get(key) === text) {
@@ -897,10 +918,10 @@ async function send() {
 $("draft").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
     e.preventDefault();
-    send().catch(showError);
+    send(e.metaKey || e.ctrlKey).catch(showError);
   }
 });
-$("send").onclick = run(send);
+$("send").onclick = run(() => send());
 $("stop").onclick = run(async () => {
   const c = state.conversation;
   if (c) await mutate({ kind: "stop", ...scope(c) });
@@ -931,10 +952,20 @@ $("rooms").onclick = run(async (e) => {
   if (el) await mutate({ kind: "select", id: el.dataset.room, scope: "room" });
 });
 $("new-bot").onclick = () => openBot();
+const handleAgentChoice = run(async (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  if (button.hasAttribute("data-probe-engines")) await mutate({ kind: "probe-engines" });
+  else if (button.dataset.setupAgent) await openSettings(button.dataset.setupAgent, true);
+  else if (button.dataset.launchAgent) openBot(null, { engine: button.dataset.launchAgent });
+  else if (button.hasAttribute("data-back-agents")) openAgentPicker();
+});
+$("welcome").addEventListener("click", handleAgentChoice);
+$("dialog").addEventListener("click", handleAgentChoice);
 $("new-room").onclick = () => openRoom();
 $("new-thread").onclick = openThread;
 $("model").onclick = () => {
-  if (currentBot()) openBot(currentBot());
+  if (currentBot() && !currentRoom()) openBot(currentBot(), { optionsOnly: true });
 };
 $("details").onclick = () => {
   detailsOpen = !detailsOpen;
@@ -970,7 +1001,7 @@ if (!(globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition)) {
     $(id).title = "此 WebView 不支持语音识别，请使用系统键盘听写";
   }
 }
-$("settings").onclick = run(openSettings);
+$("settings").onclick = run(() => openSettings());
 $("search").onclick = openSearch;
 $("show-hidden").onclick = run(async () => {
   showHidden = !showHidden;
@@ -979,6 +1010,7 @@ $("show-hidden").onclick = run(async () => {
 $("close-dialog").onclick = () => $("dialog").close();
 $("dialog").addEventListener("close", () => {
   if (!$("dialog").open) {
+    syncAgentFields = null;
     dialogGeneration++;
     $("dialog-body").onclick = null;
   }
@@ -1006,9 +1038,10 @@ $("welcome").onclick = (e) => {
   renderComposer();
   $("draft").focus();
 };
-$("conversation-header").onclick = (e) => {
+$("conversation-header").onclick = run(async (e) => {
   if (e.target.closest("[data-menu]")) openMenu();
-};
+  if (e.target.closest("[data-repair-agent]")) await openSettings(currentBot().engine);
+});
 $("status").onclick = run(async (e) => {
   if (e.target.closest("[data-dismiss]"))
     await mutate({ kind: "dismiss-status" });
@@ -1056,11 +1089,24 @@ $("messages").onclick = run(async (e) => {
     notify("代码已复制");
   }
 });
+$("approvals").oninput = (e) => {
+  if (!e.target.matches("[data-answer]")) return;
+  for (const choice of e.target.closest("[data-approval]").querySelectorAll("[data-answer-choice]"))
+    choice.setAttribute("aria-pressed", String(choice.dataset.answerChoice === e.target.value));
+};
 $("approvals").onclick = run(async (e) => {
+  const choice = e.target.closest("[data-answer-choice]");
+  if (choice) {
+    const input = choice.closest("[data-approval]").querySelector("[data-answer]");
+    input.value = choice.dataset.answerChoice;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
+    return;
+  }
   const button = e.target.closest("[data-decision]");
   if (!button) return;
   const card = button.closest("[data-approval]"),
-    answer = card.querySelector("input")?.value || "";
+    answer = button.dataset.decision === "answer" ? card.querySelector("input").value : "";
   if (button.dataset.decision === "answer" && !answer.trim())
     throw new Error("请先填写回答");
   button.disabled = true;

@@ -63,7 +63,8 @@ const claudeStream = `{"type":"system","subtype":"hook_started","session_id":"s1
 not json
 {"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}}
 {"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lo"}}}
-{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"},{"type":"tool_use","name":"Bash","input":{"command":"ls -la"}}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"},{"type":"tool_use","id":"bash-1","name":"Bash","input":{"command":"ls -la"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"bash-1","content":[{"type":"text","text":"README.md\nweb/"},{"type":"image","source":{"data":"binary"}}]}]}}
 {"type":"assistant","message":{"content":[{"type":"text","text":"Done."}]}}
 {"type":"result","subtype":"success","is_error":false,"result":"Done.","session_id":"s1"}
 `
@@ -80,8 +81,9 @@ func TestClaude(t *testing.T) {
 	if got := text(evs); got != "HelloDone." {
 		t.Errorf("text %q", got)
 	}
-	if !slices.Contains(evs, Event{Kind: EvTool, Text: "Bash: ls -la"}) {
-		t.Errorf("no tool event in %v", evs)
+	if !slices.Contains(evs, Event{Kind: EvTool, ToolID: "bash-1", Text: "Bash: ls -la"}) ||
+		!slices.Contains(evs, Event{Kind: EvToolResult, ToolID: "bash-1", Status: ToolCompleted, Output: "README.md\nweb/"}) {
+		t.Errorf("missing Bash call or its text output in %v", evs)
 	}
 	if !slices.Contains(evs, Event{Kind: EvSession, Cursor: "s1"}) {
 		t.Errorf("no session in %v", evs)
@@ -140,7 +142,8 @@ const piStream = `{"type":"session","version":3,"id":"p1","timestamp":"2026-10-2
 {"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"ing."}}
 {"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Looking."}],"stopReason":"toolUse"}}
 {"type":"tool_execution_start","toolCallId":"c1","toolName":"ls","args":{"path":"."}}
-{"type":"tool_execution_end","toolCallId":"c1","toolName":"ls","isError":false}
+{"type":"tool_execution_update","toolCallId":"c1","toolName":"ls","partialResult":{"content":[{"type":"text","text":"checking"}]}}
+{"type":"tool_execution_end","toolCallId":"c1","toolName":"ls","isError":true,"result":{"content":[{"type":"text","text":"permission denied"}]}}
 {"type":"message_start","message":{"role":"assistant","content":[],"stopReason":"pending"}}
 {"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hm"},{"type":"text","text":"Done."}],"stopReason":"stop"}}
 {"type":"agent_end","messages":[]}
@@ -167,7 +170,10 @@ func TestPiParser(t *testing.T) {
 	if err != nil || text(evs) != "Looking.Done." {
 		t.Fatalf("events %v error %v", evs, err)
 	}
-	if !slices.Contains(evs, Event{Kind: EvTool, Text: "ls: ."}) || !slices.Contains(evs, Event{Kind: EvSession, Cursor: "p1"}) {
+	if !slices.Contains(evs, Event{Kind: EvSession, Cursor: "p1"}) ||
+		!slices.Contains(evs, Event{Kind: EvTool, ToolID: "c1", Text: "ls: ."}) ||
+		!slices.Contains(evs, Event{Kind: EvToolResult, ToolID: "c1", Text: "ls", Status: ToolRunning, Output: "checking"}) ||
+		!slices.Contains(evs, Event{Kind: EvToolResult, ToolID: "c1", Text: "ls", Status: ToolFailed, Output: "permission denied"}) {
 		t.Errorf("events %v", evs)
 	}
 	args := (&Pi{}).Args(TurnInput{Model: "openai/gpt-5", Cursor: "p0", Effort: "high"})

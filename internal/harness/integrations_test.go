@@ -103,6 +103,9 @@ func TestExternalMCPApprovalScopeAndRevocation(t *testing.T) {
 	if done.Err != nil || !strings.Contains(done.Reply.Text, "external answer") || calls.Load() != 1 {
 		t.Fatal(done, calls.Load())
 	}
+	if got := done.Reply.ToolResults[0]; got.Output != "external answer" || got.Status != driver.ToolCompleted {
+		t.Fatalf("missing MCP output on approved call: %+v", got)
+	}
 	if _, err := rig.h.Send(other, "no access"); err != nil {
 		t.Fatal(err)
 	}
@@ -129,5 +132,8 @@ func TestExternalMCPApprovalScopeAndRevocation(t *testing.T) {
 	done = rig.wait(bot.ID)
 	if !strings.Contains(done.Reply.Text, "permission denied") || calls.Load() != 1 {
 		t.Fatal(done)
+	}
+	if got := done.Reply.ToolResults[0]; got.Status != driver.ToolFailed || !strings.Contains(got.Output, "permission denied") {
+		t.Fatalf("missing MCP refusal: %+v", got)
 	}
 }

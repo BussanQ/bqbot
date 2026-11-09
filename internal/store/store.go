@@ -48,7 +48,15 @@ type Message struct {
 	Text        string              `json:"text"`
 	From        string              `json:"from,omitempty"` // in a handoff transcript, the user message's asking bot
 	Tools       []string            `json:"tools,omitempty"`
-	At          time.Time           `json:"at"`
+	// ToolResults is keyed by position in Tools so old transcripts and
+	// collaboration notes can keep their original ordered labels.
+	ToolResults map[int]ToolResult `json:"tool_results,omitempty"`
+	At          time.Time          `json:"at"`
+}
+
+type ToolResult struct {
+	Status driver.ToolStatus `json:"status"`
+	Output string            `json:"output,omitempty"`
 }
 
 // Store is the app's data directory. Its methods are safe for concurrent use.

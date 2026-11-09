@@ -145,6 +145,10 @@ func TestCodexRPCSubprocess(t *testing.T) {
 		}
 	}
 	notify("item/started", map[string]any{"threadId": "t1", "item": map[string]any{"id": "cmd1", "type": "commandExecution", "command": "ls"}})
+	notify("item/commandExecution/outputDelta", map[string]any{"threadId": "t1", "turnId": "turn1", "itemId": "cmd1", "delta": "README.md\n"})
+	notify("item/completed", map[string]any{"threadId": "t1", "item": map[string]any{"id": "cmd1", "type": "commandExecution", "command": "ls", "status": "completed", "aggregatedOutput": "README.md\nweb/\n", "exitCode": 0}})
+	notify("item/completed", map[string]any{"threadId": "t1", "item": map[string]any{"id": "edit", "type": "fileChange", "status": "completed", "changes": []any{map[string]string{"path": "hello.go", "diff": "+package hello"}}}})
+	notify("item/completed", map[string]any{"threadId": "t1", "item": map[string]any{"id": "lookup", "type": "mcpToolCall", "server": "docs", "tool": "read", "status": "failed", "error": map[string]string{"message": "not found"}}})
 	notify("item/agentMessage/delta", map[string]any{"threadId": "t1", "turnId": "turn1", "itemId": "a1", "delta": "Hel"})
 	notify("item/agentMessage/delta", map[string]any{"threadId": "t1", "turnId": "turn1", "itemId": "a1", "delta": "lo"})
 	notify("item/completed", map[string]any{"threadId": "t1", "item": map[string]any{"id": "a1", "type": "agentMessage", "text": "Hello"}})
@@ -207,7 +211,12 @@ func TestCodexRPCStreamingAndConfig(t *testing.T) {
 	if text(events) != "HelloDone." {
 		t.Fatalf("text=%q", text(events))
 	}
-	if !slices.Contains(events, Event{Kind: EvSession, Cursor: "t1"}) || !slices.Contains(events, Event{Kind: EvTool, Text: "shell: ls"}) {
+	if !slices.Contains(events, Event{Kind: EvSession, Cursor: "t1"}) ||
+		!slices.Contains(events, Event{Kind: EvTool, ToolID: "cmd1", Text: "shell: ls"}) ||
+		!slices.Contains(events, Event{Kind: EvToolDelta, ToolID: "cmd1", Output: "README.md\n"}) ||
+		!slices.Contains(events, Event{Kind: EvToolResult, ToolID: "cmd1", Text: "shell: ls", Status: ToolCompleted, Output: "README.md\nweb/\n"}) ||
+		!slices.Contains(events, Event{Kind: EvToolResult, ToolID: "edit", Text: "edit: hello.go", Status: ToolCompleted, Output: "hello.go\n+package hello"}) ||
+		!slices.Contains(events, Event{Kind: EvToolResult, ToolID: "lookup", Text: "docs.read", Status: ToolFailed, Output: "not found"}) {
 		t.Fatalf("events=%v", events)
 	}
 	for _, m := range codexRPCLog(t, dir) {

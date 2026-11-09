@@ -74,6 +74,33 @@ func statusIs(t *testing.T, err error, status int) {
 	}
 }
 
+func TestAgentCatalogReadinessAndSteering(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing-cli")
+	for _, tc := range []struct {
+		driver       driver.Driver
+		ready, steer bool
+	}{
+		{&driver.Codex{}, false, true},
+		{&driver.Pi{}, false, true},
+		{&driver.Claude{}, false, false},
+		{&driver.Grok{}, false, false},
+		{&driver.OpenAI{}, true, false},
+		{&driver.Echo{}, true, false},
+	} {
+		t.Run(tc.driver.Name(), func(t *testing.T) {
+			_, c, _ := newTestService(t, tc.driver)
+			// Older UI versions exposed a CLI path even for API and offline engines.
+			if err := c.SaveSettings(map[string]driver.EngineSettings{tc.driver.Name(): {Path: missing}}); err != nil {
+				t.Fatal(err)
+			}
+			engines, err := c.Engines()
+			if err != nil || len(engines) != 1 || engines[0].Available != tc.ready || engines[0].Steering != tc.steer || len(engines[0].Models) == 0 {
+				t.Fatalf("catalog = %+v, err = %v", engines, err)
+			}
+		})
+	}
+}
+
 func TestHTTPCRUDSettingsAndValidation(t *testing.T) {
 	_, c, h := newTestService(t, nil)
 	b := mustSave(t, c, "bot-a")

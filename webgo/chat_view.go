@@ -53,10 +53,13 @@ type session struct {
 // thread; other goroutines change it through post.
 type app struct {
 	workspaceState
-	api     *service.Client
-	cancel  context.CancelFunc
-	catalog []service.Engine
-	images  map[string]*ui.Bitmap
+	api        *service.Client
+	cancel     context.CancelFunc
+	catalog    []service.Engine
+	probeID    uint64
+	probing    bool
+	probeError string
+	images     map[string]*ui.Bitmap
 
 	settingsOpen   bool
 	settings       map[string]driver.EngineSettings
@@ -140,11 +143,20 @@ func (a *app) connect() {
 
 // probeEngines asks the service for availability and its model catalog.
 func (a *app) probeEngines() {
+	a.probeID++
+	id := a.probeID
+	a.probing, a.probeError = true, ""
 	go func() {
 		engines, err := a.api.Engines()
 		a.post(func() {
+			// A settings save can start a newer probe with a different CLI path.
+			if id != a.probeID {
+				return
+			}
+			a.probing = false
 			if err != nil {
-				a.status = err.Error()
+				a.probeError = err.Error()
+				a.status = a.probeError
 				return
 			}
 			a.catalog, a.engines = engines, nil

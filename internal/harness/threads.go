@@ -74,7 +74,7 @@ func (h *Harness) SendThread(id, text string, attachments []driver.Attachment, m
 	}
 	user := store.Message{ID: store.NewID(), Role: "user", Text: text, ThreadID: id, Attachments: append([]driver.Attachment(nil), attachments...), At: time.Now()}
 	if current := h.running[bot.ID]; mode == "steer" && current != nil && current.thread.ID == id && current.asker == "" && current.ctx.Err() == nil && current.prepared && current.bot.Engine == bot.Engine && len(attachments) == 0 && len(h.queues[bot.ID]) == 0 {
-		if capable, ok := d.(interface{ SupportsSteering() bool }); ok && capable.SupportsSteering() && len(current.steer) < cap(current.steer) {
+		if driver.SupportsSteering(d) && len(current.steer) < cap(current.steer) {
 			if err := h.record(current, user); err != nil {
 				return store.Message{}, err
 			}

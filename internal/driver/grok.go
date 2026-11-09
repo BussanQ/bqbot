@@ -42,13 +42,14 @@ type acpMessage struct {
 }
 
 type acpConnection struct {
-	ctx    context.Context
-	input  io.Writer
-	output *bufio.Scanner
-	in     TurnInput
-	emit   func(Event)
-	seq    int
-	stream bool
+	ctx       context.Context
+	input     io.Writer
+	output    *bufio.Scanner
+	in        TurnInput
+	emit      func(Event)
+	seq       int
+	stream    bool
+	sessionID string
 }
 
 func (c *acpConnection) write(v any) error {
@@ -156,25 +157,54 @@ func (c *acpConnection) incoming(msg acpMessage) error {
 		return nil
 	}
 	var p struct {
-		Update struct {
-			Type    string `json:"sessionUpdate"`
-			Title   string `json:"title"`
-			Content struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
+		SessionID string `json:"sessionId"`
+		Update    struct {
+			Type       string          `json:"sessionUpdate"`
+			ToolCallID string          `json:"toolCallId"`
+			Title      string          `json:"title"`
+			Kind       string          `json:"kind"`
+			Status     string          `json:"status"`
+			Content    json.RawMessage `json:"content"`
+			RawOutput  json.RawMessage `json:"rawOutput"`
 		} `json:"update"`
 	}
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
 		return err
 	}
-	switch p.Update.Type {
+	if p.SessionID != "" && p.SessionID != c.sessionID {
+		return nil
+	}
+	u := p.Update
+	switch u.Type {
 	case "agent_message_chunk":
-		if p.Update.Content.Type == "text" && p.Update.Content.Text != "" {
-			c.emit(Event{Kind: EvText, Text: p.Update.Content.Text})
+		var chunk struct{ Type, Text string }
+		if json.Unmarshal(u.Content, &chunk) == nil && chunk.Type == "text" && chunk.Text != "" {
+			c.emit(Event{Kind: EvText, Text: chunk.Text})
 		}
-	case "tool_call":
-		c.emit(Event{Kind: EvTool, Text: p.Update.Title})
+	case "tool_call", "tool_call_update":
+		label := u.Title
+		if label == "" {
+			label = u.Kind
+		}
+		if u.Type == "tool_call" {
+			c.emit(Event{Kind: EvTool, ToolID: u.ToolCallID, Text: label})
+		}
+		output := contentText(u.Content)
+		if output == "" {
+			output = rawOutputText(u.RawOutput)
+		}
+		var status ToolStatus
+		switch u.Status {
+		case "completed":
+			status = ToolCompleted
+		case "failed":
+			status = ToolFailed
+		case "pending", "in_progress":
+			status = ToolRunning
+		}
+		if status != "" || output != "" {
+			c.emit(Event{Kind: EvToolResult, ToolID: u.ToolCallID, Text: label, Status: status, Output: output})
+		}
 	}
 	return nil
 }
@@ -337,7 +367,7 @@ func (d *Grok) Run(ctx context.Context, in TurnInput, emit func(Event)) error {
 		}
 		prompt = append(prompt, map[string]string{"type": "image", "data": a.Data, "mimeType": a.MIME})
 	}
-	c.stream = true
+	c.sessionID, c.stream = sessionID, true
 	var result struct {
 		StopReason string `json:"stopReason"`
 	}

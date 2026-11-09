@@ -166,6 +166,25 @@ func TestGrokInteractive(t *testing.T) {
 	}
 }
 
+func TestGrokToolUpdates(t *testing.T) {
+	var events []Event
+	c := &acpConnection{stream: true, sessionID: "s", emit: func(e Event) { events = append(events, e) }}
+	for _, params := range []string{
+		`{"sessionId":"s","update":{"sessionUpdate":"tool_call","toolCallId":"call","title":"Read"}}`,
+		`{"sessionId":"other","update":{"sessionUpdate":"tool_call_update","toolCallId":"call","rawOutput":"wrong session"}}`,
+		`{"sessionId":"s","update":{"sessionUpdate":"tool_call_update","toolCallId":"call","status":"in_progress","content":[{"type":"content","content":{"type":"text","text":"line one\nline two"}}]}}`,
+		`{"sessionId":"s","update":{"sessionUpdate":"tool_call_update","toolCallId":"call","status":"failed","rawOutput":"read error"}}`,
+	} {
+		if err := c.incoming(acpMessage{Method: "session/update", Params: json.RawMessage(params)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(events) != 3 || events[0].Text != "Read" || events[1].Output != "line one\nline two" ||
+		events[2] != (Event{Kind: EvToolResult, ToolID: "call", Status: ToolFailed, Output: "read error"}) {
+		t.Fatalf("tool events: %+v", events)
+	}
+}
+
 func TestGrokSessionExpiration(t *testing.T) {
 	for _, mode := range []string{"expired", "generic", "no-load"} {
 		t.Run(mode, func(t *testing.T) {

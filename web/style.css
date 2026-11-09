@@ -732,6 +732,142 @@ kbd {
   width: 12px;
   height: 12px;
 }
+.welcome [data-agent-directory] {
+  margin-top: 24px;
+}
+.agent-list-head,
+.agent-recheck,
+.agent-choice,
+.agent-choice-main {
+  display: flex;
+  align-items: center;
+}
+.agent-list-head {
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.agent-recheck {
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--accent);
+}
+.agent-recheck svg {
+  width: 14px;
+  height: 14px;
+}
+.agent-choices {
+  display: grid;
+  gap: 6px;
+}
+.agent-choice {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+}
+.agent-choice:focus-within,
+.agent-choice:hover {
+  border-color: var(--accent);
+}
+.agent-choice-main {
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  border-radius: inherit;
+  text-align: left;
+}
+.agent-choice-main:focus-visible {
+  outline-offset: -2px;
+}
+.agent-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: 600 15px/1 var(--mono);
+}
+.agent-choice-label {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.agent-choice-label strong {
+  font-weight: 600;
+}
+.agent-choice-label small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 12px;
+}
+.agent-availability {
+  margin-left: auto;
+  white-space: nowrap;
+  color: var(--accent);
+  font-size: 12px;
+}
+.agent-availability.needs-setup {
+  color: var(--muted);
+}
+.agent-setup {
+  margin-right: 8px;
+}
+.agent-setup svg {
+  width: 16px;
+  height: 16px;
+}
+.model-choices,
+.answer-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.model-choices {
+  max-height: 96px;
+  overflow: auto;
+  margin: -8px 0 16px;
+  padding: 3px;
+}
+.model-choices button,
+.answer-choices button {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  font-size: 12px;
+}
+.model-choices button:is(:hover, [aria-pressed="true"]),
+.answer-choices button:is(:hover, [aria-pressed="true"]) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.agent-policy:has(> [hidden]) {
+  grid-template-columns: 1fr;
+}
+.agent-policy .form-field {
+  margin-top: 0;
+}
+.agent-profile-details {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.agent-profile-details summary {
+  padding-top: 12px;
+  cursor: pointer;
+  color: var(--accent);
+}
 .composer-area {
   padding: 12px 32px 16px;
   width: 100%;
@@ -788,6 +924,7 @@ kbd {
 }
 .composer-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-top: 12px;
@@ -796,8 +933,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 2px;
-  flex: 1;
-  min-width: 0;
+  flex: 1 0 auto;
 }
 .composer-icon {
   width: 32px;
@@ -826,7 +962,8 @@ kbd {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: none;
+  max-width: 100%;
+  margin-left: auto;
 }
 .model-button {
   display: flex;
@@ -861,7 +998,7 @@ kbd {
   height: 12px;
 }
 .composer-actions .model-button {
-  flex: none;
+  flex: 0 1 auto;
 }
 .message .model-button {
   height: auto;
@@ -1141,9 +1278,43 @@ kbd {
   list-style-position: inside;
 }
 .tool-lines ul {
-  padding-left: 16px;
+  list-style: none;
+  padding: 0;
   line-height: 1.9;
-  margin-bottom: 0;
+  margin: 8px 0 0;
+}
+.tool-lines li {
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+.tool-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tool-status {
+  flex: none;
+  font-size: 11px;
+}
+.tool-status[data-status="running"] {
+  color: var(--accent);
+}
+.tool-status[data-status="failed"] {
+  color: var(--danger);
+}
+.tool-output {
+  max-height: 13rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--soft);
+  color: var(--text);
+  font: 12px/1.6 var(--mono);
 }
 .typing {
   display: flex;
@@ -1371,8 +1542,8 @@ kbd {
 .approval input {
   margin-top: 4px;
 }
-#approvals {
-  max-height: 235px;
+.turn-inbox {
+  max-height: min(28vh, 235px);
   overflow: auto;
 }
 .pair-code {

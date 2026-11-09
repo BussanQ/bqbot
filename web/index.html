@@ -91,18 +91,20 @@
               <div class="conversation-width">
                 <section id="welcome" class="welcome"></section>
                 <div id="messages" role="log" aria-label="聊天消息"></div>
-                <div id="pending"></div>
                 <div id="typing" class="typing" role="status" hidden>
                   <span></span><span></span><span></span
-                  ><small>正在思考与处理…</small>
+                  ><small id="turn-status"></small>
                 </div>
               </div>
             </div>
             <button class="jump-bottom" id="jump-bottom" hidden>
               <span data-icon="down"></span>回到最新消息
             </button>
-            <div class="composer-area">
-              <div id="approvals"></div>
+            <div class="composer-area" id="composer-area">
+              <div class="turn-inbox">
+                <div id="approvals"></div>
+                <div id="pending"></div>
+              </div>
               <div class="composer" id="composer">
                 <div id="attachments" class="attachments"></div>
                 <textarea
@@ -137,27 +139,23 @@
                       <option value="queue">加入队列</option>
                       <option value="steer">追加指令</option>
                     </select
-                    ><button type="button" id="model" class="model-button">
+                    ><button type="button" id="model" class="model-button" aria-haspopup="dialog" title="Agent、模型与权限">
                       <span class="status-dot"></span
                       ><span id="model-name">默认模型</span
                       ><span data-icon="chevron"></span>
                     </button>
+                    <button class="send-button" id="send" aria-label="发送消息">
+                      <span data-icon="up"></span>
+                    </button>
+                    <button class="send-button stop-button" id="stop" aria-label="停止生成" hidden>
+                      <span data-icon="stop"></span>
+                    </button>
                   </div>
-                  <button class="send-button" id="send" aria-label="发送消息">
-                    <span data-icon="up"></span></button
-                  ><button
-                    class="send-button stop-button"
-                    id="stop"
-                    aria-label="停止生成"
-                    hidden
-                  >
-                    <span data-icon="stop"></span>
-                  </button>
                 </div>
               </div>
               <div class="composer-hint">
                 <span><kbd>Enter</kbd> 发送 <kbd>Shift Enter</kbd> 换行</span
-                ><span>想法在这里，开始发生。</span>
+                ><span id="steer-hint" hidden></span>
               </div>
             </div>
           </section>

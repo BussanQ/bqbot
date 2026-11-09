@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -99,6 +100,7 @@ type turn struct {
 	result           store.Message
 	err              error
 	reply            store.Message
+	toolIndexes      map[string]int // provider call ID to Tools index; -1 for calls handled by bqbot
 	user             store.Message
 	text             strings.Builder
 	brk              bool
@@ -392,6 +394,12 @@ func (h *Harness) run(t *turn) {
 		t.reply.Role = "error"
 		t.reply.Text = err.Error()
 	}
+	for i, result := range t.reply.ToolResults {
+		if result.Status == driver.ToolRunning {
+			result.Status = driver.ToolUnconfirmed
+			t.reply.ToolResults[i] = result
+		}
+	}
 	if t.recorded && (t.reply.Text != "" || len(t.reply.Tools) > 0) {
 		err = errors.Join(err, h.record(t, t.reply))
 	}
@@ -594,16 +602,83 @@ func (h *Harness) emit(t *turn, e driver.Event) {
 		}
 		t.text.WriteString(e.Text)
 		t.reply.Text = t.text.String()
-	case driver.EvTool:
+	case driver.EvTool, driver.EvToolResult, driver.EvToolDelta:
 		t.output = true
-		if !bqbotTool(e.Text) {
-			t.reply.Tools = append(t.reply.Tools, e.Text)
+		e.Output = driver.LimitToolOutput(e.Output)
+		if !t.applyToolEvent(e) {
+			return
 		}
 	}
 	h.publishLocked(t, Update{BotID: t.bot.ID, Reply: clone(t.reply), Busy: true, Event: &e})
 }
-func bqbotTool(label string) bool {
-	return strings.HasPrefix(label, mcp.ToolPrefix) || strings.HasPrefix(label, mcp.Server+".")
+
+// Approvals, delegation and external tools have their own harness events.
+func handledTool(label string) bool {
+	name, _, _ := strings.Cut(label, ":")
+	if name == mcp.ApprovalToolName || name == mcp.ApprovalServer+"."+mcp.ToolApprove {
+		return true
+	}
+	tool, ok := strings.CutPrefix(name, mcp.ToolPrefix)
+	if !ok {
+		tool, ok = strings.CutPrefix(name, mcp.Server+".")
+	}
+	return ok && (tool == mcp.ToolAsk || tool == mcp.ToolCoordinate || strings.HasPrefix(tool, "external_"))
+}
+
+func (t *turn) applyToolEvent(e driver.Event) bool {
+	if e.ToolID == "" {
+		// Older protocols may provide only a label. Never pair anonymous calls by name.
+		if e.Kind != driver.EvTool || handledTool(e.Text) || e.Text == "" {
+			return false
+		}
+		t.reply.Tools = append(t.reply.Tools, e.Text)
+		return true
+	}
+	if t.toolIndexes == nil {
+		t.toolIndexes = make(map[string]int)
+	}
+	i, known := t.toolIndexes[e.ToolID]
+	if !known {
+		if handledTool(e.Text) {
+			t.toolIndexes[e.ToolID] = -1
+			return false
+		}
+		i = len(t.reply.Tools)
+		t.toolIndexes[e.ToolID] = i
+		label := e.Text
+		if label == "" {
+			label = "工具"
+		}
+		t.reply.Tools = append(t.reply.Tools, label)
+		if t.reply.ToolResults == nil {
+			t.reply.ToolResults = make(map[int]store.ToolResult)
+		}
+	} else if i < 0 {
+		return false
+	}
+	before := t.reply.ToolResults[i]
+	after := before
+	if after.Status == "" {
+		after.Status = driver.ToolRunning
+	}
+	// A late progress notification must not reopen a finished call.
+	if before.Status != "" && before.Status != driver.ToolRunning && (e.Status == driver.ToolRunning || e.Kind == driver.EvToolDelta) {
+		return false
+	}
+	if e.Status != "" {
+		after.Status = e.Status
+	}
+	if e.Kind == driver.EvToolDelta {
+		after.Output = driver.AppendToolOutput(after.Output, e.Output)
+	} else if e.Output != "" {
+		after.Output = e.Output
+	}
+	renamed := e.Text != "" && t.reply.Tools[i] == "工具"
+	if renamed {
+		t.reply.Tools[i] = e.Text
+	}
+	t.reply.ToolResults[i] = after
+	return !known || before != after || renamed
 }
 
 // persona is the bot's system prompt. With handoff, it lists the other bots
@@ -644,6 +719,7 @@ func clip(s string, n int) string {
 
 func clone(m store.Message) *store.Message {
 	m.Tools = append([]string(nil), m.Tools...)
+	m.ToolResults = maps.Clone(m.ToolResults)
 	m.Attachments = append([]driver.Attachment(nil), m.Attachments...)
 	return &m
 }

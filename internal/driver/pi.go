@@ -104,10 +104,14 @@ type piLine struct {
 		Type  string `json:"type"`
 		Delta string `json:"delta"`
 	} `json:"assistantMessageEvent"`
-	ToolName   string         `json:"toolName"`
-	Args       map[string]any `json:"args"`
-	Success    bool           `json:"success"`
-	FinalError string         `json:"finalError"`
+	ToolName      string          `json:"toolName"`
+	ToolCallID    string          `json:"toolCallId"`
+	PartialResult json.RawMessage `json:"partialResult"`
+	Result        json.RawMessage `json:"result"`
+	IsError       bool            `json:"isError"`
+	Args          map[string]any  `json:"args"`
+	Success       bool            `json:"success"`
+	FinalError    string          `json:"finalError"`
 }
 
 type piParser struct {
@@ -168,7 +172,13 @@ func (p *piParser) line(b []byte) error {
 		}
 		p.emit(Event{Kind: EvBreak})
 	case "tool_execution_start":
-		p.emit(Event{Kind: EvTool, Text: toolLabel(m.ToolName, m.Args)})
+		p.emit(Event{Kind: EvTool, ToolID: m.ToolCallID, Text: toolLabel(m.ToolName, m.Args)})
+	case "tool_execution_update":
+		output, _ := MCPToolText(m.PartialResult)
+		p.emit(Event{Kind: EvToolResult, ToolID: m.ToolCallID, Text: m.ToolName, Status: ToolRunning, Output: output})
+	case "tool_execution_end":
+		output, failed := MCPToolText(m.Result)
+		p.emit(Event{Kind: EvToolResult, ToolID: m.ToolCallID, Text: m.ToolName, Status: resultStatus(m.IsError || failed), Output: output})
 	case "auto_retry_end":
 		if !m.Success && m.FinalError != "" {
 			p.lastErr = m.FinalError
