@@ -170,18 +170,17 @@
         </div>
       </main>
     </div>
-    <dialog id="dialog">
+    <dialog id="dialog" aria-labelledby="dialog-title">
       <div class="dialog-header">
-        <div>
-          <span class="eyebrow">YOUR WORKSPACE</span>
-          <h2 id="dialog-title"></h2>
-        </div>
-        <button class="icon-button" id="close-dialog" aria-label="关闭">
+        <h2 id="dialog-title"></h2>
+        <button type="button" class="close-button" id="close-dialog" aria-label="关闭弹窗" title="关闭（Esc）">
           <span data-icon="close"></span>
         </button>
       </div>
-      <div id="dialog-body"></div>
-      <p id="dialog-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-content">
+        <div id="dialog-body"></div>
+        <p id="dialog-error" class="form-error" role="alert" hidden></p>
+      </div>
     </dialog>
     <div id="toast" class="toast" role="status" hidden></div>
   </body>

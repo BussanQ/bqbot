@@ -187,14 +187,22 @@ svg {
   gap: 8px;
   align-items: center;
   width: 100%;
-  padding: 12px 8px;
-  color: var(--muted);
+  padding: 11px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--text);
   font-size: 14px;
   line-height: 20px;
   margin-bottom: 12px;
   border-radius: 8px;
 }
 .search-trigger:hover,
+.search-trigger:focus-visible {
+  border-color: var(--accent);
+}
+.search-trigger svg {
+  color: var(--accent);
+}
 .footer-button:hover,
 .subtle:hover {
   background: var(--soft);
@@ -209,6 +217,8 @@ kbd {
 .search-trigger kbd {
   margin-left: auto;
   font-family: var(--mono);
+  background: var(--card);
+  color: var(--accent);
   border: 1px solid var(--line);
   border-radius: 4px;
   padding: 2px 4px;
@@ -277,6 +287,30 @@ kbd {
   background: var(--soft);
   color: var(--text);
 }
+.close-button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--text);
+}
+.close-button:hover,
+.close-button:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.close-button svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
+}
 .agent-row,
 .room-row {
   display: flex;
@@ -294,7 +328,22 @@ kbd {
 }
 .agent-row.selected,
 .room-row.selected {
+  position: relative;
   background: var(--accent-soft);
+}
+.agent-row.selected::before,
+.room-row.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: calc(50% - 9px);
+  width: 3px;
+  height: 18px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+.room-row.selected {
+  color: var(--text);
 }
 .avatar {
   width: 33px;
@@ -436,7 +485,10 @@ kbd {
   padding: 8px;
   font-size: 14px;
   line-height: 20px;
-  color: var(--muted);
+  color: var(--text);
+}
+.footer-button svg {
+  color: var(--accent);
 }
 .local-status {
   font-size: 12px;
@@ -1361,9 +1413,12 @@ dialog {
   width: 490px;
   max-width: calc(100vw - 40px);
   max-height: 85vh;
-  padding: 24px;
+  padding: 0;
+  overflow: hidden;
 }
 dialog[open] {
+  display: flex;
+  flex-direction: column;
   animation: dialog-in 500ms var(--ease-out);
 }
 dialog::backdrop {
@@ -1372,19 +1427,27 @@ dialog::backdrop {
 }
 .dialog-header {
   display: flex;
+  flex: none;
+  gap: 16px;
   justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 24px;
+  align-items: center;
+  padding: 16px 20px 16px 24px;
+  border-bottom: 1px solid var(--line);
 }
 .dialog-header h2 {
   font-size: 20px;
   line-height: 28px;
   font-weight: 500;
-  margin: 8px 0 0;
+  margin: 0;
   letter-spacing: -0.5px;
 }
-.dialog-header .icon-button {
-  margin: -4px -4px 0 0;
+.dialog-content {
+  padding: 16px 24px 24px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.dialog-content form > .form-field:first-child {
+  margin-top: 0;
 }
 .form-field {
   display: block;
@@ -1570,6 +1633,13 @@ select,
 }
 .settings-links {
   margin: 16px 0 4px;
+}
+.settings-links button > svg:first-child {
+  box-sizing: content-box;
+  padding: 6px;
+  border-radius: 8px;
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 .settings-links button > span {
   display: flex;
