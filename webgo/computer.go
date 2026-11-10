@@ -22,6 +22,8 @@ type ComputerAction struct {
 	Action     computer.Action      `json:"action"`
 	Confirmed  bool                 `json:"confirmed"`
 	Permission string               `json:"permission"`
+	SDP        string               `json:"sdp,omitempty"`
+	StreamID   string               `json:"stream_id,omitempty"`
 }
 
 func (d *Desktop) Computer(r ComputerAction) (json.RawMessage, error) {
@@ -63,6 +65,10 @@ func (d *Desktop) Computer(r ComputerAction) (json.RawMessage, error) {
 		v, e = api.SaveComputer(r.Config)
 	case "action":
 		v, e = api.ComputerAction(r.BotID, service.ComputerRequest{Action: r.Action, Confirmed: r.Confirmed})
+	case "stream-open":
+		v, e = api.OpenWorkspaceStream(r.BotID, r.SDP)
+	case "stream-renew", "stream-close":
+		e = api.UpdateWorkspaceStream(r.BotID, r.StreamID, r.Kind == "stream-close")
 	case "capture-to-chat":
 		// Capture again in Go; the page cannot smuggle a different image into this operation.
 		var out computer.Result

@@ -26,8 +26,8 @@ func (c ComputerConfig) Validate() error {
 	if !validID(c.BotID) {
 		return errors.New("invalid computer bot ID")
 	}
-	if c.Provider != "boat" && c.Provider != "vm" && c.Provider != "host" {
-		return errors.New("computer provider must be boat, vm or host")
+	if c.Provider != "boat" && c.Provider != "vm" && c.Provider != "host" && c.Provider != "workspace" {
+		return errors.New("computer provider must be boat, vm, workspace or host")
 	}
 	if c.Provider == "host" && c.Enabled && !c.HostConsent {
 		return errors.New("host control requires explicit consent")
@@ -56,6 +56,9 @@ func (c ComputerConfig) Validate() error {
 	}
 	if c.Provider == "boat" && (!validID(c.SandboxID) || c.TokenEnv == "") {
 		return errors.New("Boat requires sandbox ID and token environment variable")
+	}
+	if c.Provider == "workspace" && (c.TokenEnv == "" || c.SandboxID != "" || c.HostConsent) {
+		return errors.New("Workspace Bridge requires a token environment variable and its own endpoint")
 	}
 	if strings.ContainsAny(c.URL, "\r\n\x00") {
 		return errors.New("invalid computer URL")

@@ -21,11 +21,20 @@ func (h *Harness) prepareComputer(t *turn, g *externalGroup) error {
 		if config.BotID != t.bot.ID || !config.Enabled {
 			continue
 		}
+		// A text-only API partner can open a workspace in the human panel
+		// without trying to advertise an unsupported tool to its model.
+		if config.Provider == "workspace" && t.bot.Engine == "openai" {
+			continue
+		}
 		if e := config.Validate(); e != nil {
 			return e
 		}
 		tool := mcpgateway.Tool{Name: "computer", Description: "Use this bot's configured desktop. Each action requires the normal tool approval. screenshot captures the screen; click uses pixel coordinates; type inserts text; key accepts Return, Tab, Escape, BackSpace, arrows, Home, End, Page_Up, Page_Down, space; scroll accepts up/down and screenshot x/y coordinates.", InputSchema: json.RawMessage(`{"type":"object","properties":{"kind":{"type":"string","enum":["screenshot","click","type","key","scroll"]},"x":{"type":"integer","minimum":0,"maximum":32767},"y":{"type":"integer","minimum":0,"maximum":32767},"text":{"type":"string","maxLength":8192},"key":{"type":"string"},"direction":{"type":"string","enum":["up","down"]}},"required":["kind"],"additionalProperties":false}`)}
 		bindHost := h.Host.BindSession()
+		if config.Provider == "workspace" {
+			tool.Description = "Operate this bot's Workspace Bridge. Use browser_tabs, browser_open (HTTP URL), browser_read, browser_click or browser_fill with a CSS selector. Use gui_tree then gui_invoke with a current ref, or screenshot and pixel coordinates. Each call follows the bot's tool approval policy."
+			tool.InputSchema = computer.WorkspaceSchema
+		}
 		g.tools["external_computer"] = externalTool{tool: tool, invoke: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
 			// Configuration is read after approval. Disabling or changing the desktop
 			// while a tool is awaiting permission cannot grant access to a different one.
@@ -50,7 +59,11 @@ func (h *Harness) prepareComputer(t *turn, g *externalGroup) error {
 				return nil, e
 			}
 			if out.Image == nil {
-				return json.Marshal(map[string]any{"content": []map[string]string{{"type": "text", "text": "Desktop action completed."}}})
+				text := out.Text
+				if text == "" {
+					text = "Desktop action completed."
+				}
+				return json.Marshal(map[string]any{"content": []map[string]string{{"type": "text", "text": text}}})
 			}
 			h.mu.Lock()
 			if t.ctx.Err() != nil {

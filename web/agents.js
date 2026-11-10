@@ -2,6 +2,7 @@
 import { escapeHTML as esc } from "./markdown.js";
 
 const providers = {
+  bqbot: { name: "bqbot", mark: "bq" },
   claude: { name: "Claude Code", mark: "✳" },
   codex: { name: "Codex", mark: ">_" },
   pi: { name: "Pi", mark: "π" },
@@ -21,13 +22,13 @@ export function canSteer(c, engine, attachments) {
 
 function agentRow(engine, icon) {
   const id = engine.name;
-  const local = hasTools(id);
+  const local = hasTools(id) && id !== "bqbot";
   const description = local
     ? engine.version || `本机命令 · ${id}`
-    : id === "echo" ? "在本机回显消息" : "使用服务地址和模型 ID";
+    : id === "bqbot" ? "通过模型服务使用伙伴、记忆和工作区工具" : id === "echo" ? "在本机回显消息" : "使用服务地址和模型 ID";
   const status = local
     ? (engine.available ? "已检测" : "需配置")
-    : id === "echo" ? "离线" : "API";
+    : id === "bqbot" ? "内置" : id === "echo" ? "离线" : "API";
   return `<div class="agent-choice">
     <button type="button" class="agent-choice-main" ${engine.available ? `data-launch-agent="${esc(id)}"` : `data-setup-agent="${esc(id)}"`}>
       <span class="agent-mark" aria-hidden="true">${esc(providers[id]?.mark || id.slice(0, 1))}</span>

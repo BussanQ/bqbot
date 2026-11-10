@@ -41,7 +41,8 @@ func (s *Server) computerRoutes(mux *http.ServeMux) {
 			fail(w, invalid(e.Error()))
 			return
 		}
-		result(w, v, s.h.Store.SaveComputer(v))
+		err := s.saveComputer(v)
+		result(w, v, err)
 	})
 	mux.HandleFunc("POST /v1/computers/{bot}/action", s.withBot(func(w http.ResponseWriter, r *http.Request, b store.Bot) {
 		var v ComputerRequest
@@ -52,7 +53,8 @@ func (s *Server) computerRoutes(mux *http.ServeMux) {
 			fail(w, invalid(e.Error()))
 			return
 		}
-		if v.Action.Kind != "screenshot" && !v.Confirmed {
+		readOnly := v.Action.Kind == "screenshot" || v.Action.Kind == "browser_tabs" || v.Action.Kind == "browser_read" || v.Action.Kind == "gui_tree"
+		if !readOnly && !v.Confirmed {
 			fail(w, problem{http.StatusForbidden, "computer input requires explicit confirmation"})
 			return
 		}

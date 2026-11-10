@@ -255,7 +255,7 @@ function renderHeader() {
   const status = c.closed ? "只读会话" : waitingForUser(c) || (c.busy ? "正在回复" :
     missingCLI ? "未检测到 CLI" : "");
   $("conversation-header").innerHTML =
-    `${r ? `<span class="avatar">${icon("hash")}</span>` : avatar(b || { name: "B" })}<div><h1>${esc(title)}</h1><p><span class="status-dot"></span>${esc([source, status].filter(Boolean).join(" · "))}</p></div><div class="header-actions">${missingCLI ? '<button class="secondary" data-repair-agent>配置 CLI</button>' : ""}<button class="icon-button" data-menu aria-label="更多操作">${icon("dots")}</button></div>`;
+    `${r ? `<span class="avatar">${icon("hash")}</span>` : avatar(b || { name: "B" })}<div><h1>${esc(title)}</h1><p><span class="status-dot"></span>${esc([source, status].filter(Boolean).join(" · "))}</p></div><div class="header-actions">${missingCLI ? '<button class="secondary" data-repair-agent>配置 CLI</button>' : !r && b?.engine === "bqbot" ? '<button class="secondary" data-repair-agent>模型服务</button>' : ""}<button class="icon-button" data-menu aria-label="更多操作">${icon("dots")}</button></div>`;
 }
 function renderWelcome() {
   const c = state.conversation,
@@ -580,7 +580,7 @@ async function openSettings(preferred, fromPicker = false) {
   const generation = dialogGeneration;
   const settings = await action({ kind: "settings" });
   if (generation !== dialogGeneration) return;
-  const engines = (state.engines?.map((e) => e.name) || ["claude", "codex", "pi", "grok", "openai"]).filter((name) => name !== "echo");
+  const engines = (state.engines?.map((e) => e.name) || ["bqbot", "claude", "codex", "pi", "grok", "openai"]).filter((name) => name !== "echo");
   let selected = preferred || engines[0];
   const select = !preferred && engines.length ? field("选择 Agent", "engine", selected, {
     select: engines.map((id) => [id, agentName(id)]),
@@ -617,7 +617,7 @@ async function openSettings(preferred, fromPicker = false) {
   const load = () => {
     if (!selected) return;
     const s = settings[selected] || {};
-    const connection = selected === "openai"
+    const connection = selected === "openai" || selected === "bqbot"
       ? `${field("API 地址", "base_url", s.base_url, { placeholder: "https://api.openai.com/v1" })}${field("密钥环境变量名称", "api_key_env", s.api_key_env, { placeholder: "OPENAI_API_KEY" })}<p class="form-help">密钥由本地服务从环境变量读取，只需在此填写变量名。</p>`
       : `${field("CLI 路径", "path", s.path, { placeholder: `默认使用 PATH 中的 ${selected}` })}<p class="form-help">先在终端完成 CLI 安装和登录。如果已安装但未被检测到，可填写可执行文件的完整路径。</p>`;
     $("engine-settings").innerHTML = connection +
@@ -991,7 +991,7 @@ const voiceUI = createVoiceUI({
 });
 const computerUI = createComputerUI({ bridge, openDialog, field, dialogActions, getBots: () => state.bots || [], getConversation: () => state.conversation, notify, run });
 window.addEventListener("pagehide", () => { voiceUI.shutdown(); computerUI.shutdown(); });
-$("computer-panel").onclick = run(() => computerUI.home());
+$("computer-panel").onclick = run(() => computerUI.openFor(currentRoom() ? "" : currentBot()?.id));
 $("dictate").onclick = run(() => voiceUI.dictate());
 $("voice-call").onclick = run(() => voiceUI.toggleCall());
 $("voice-stop").onclick = run(() => voiceUI.stop());
@@ -1010,6 +1010,7 @@ $("show-hidden").onclick = run(async () => {
 $("close-dialog").onclick = () => $("dialog").close();
 $("dialog").addEventListener("close", () => {
   if (!$("dialog").open) {
+    computerUI.shutdown();
     syncAgentFields = null;
     dialogGeneration++;
     $("dialog-body").onclick = null;

@@ -705,8 +705,12 @@ func (h *Harness) persona(b store.Bot, handoff bool) string {
 	if roster.Len() == 0 {
 		return s
 	}
+	prefix := mcp.ToolPrefix
+	if b.Engine == "bqbot" {
+		prefix = ""
+	} // the built-in model sees the grant's MCP names directly
 	return s + "\n\nThe person's other bots are below. When one of them is better placed to answer part of a request, " +
-		"ask it with the " + mcp.ToolPrefix + mcp.ToolAsk + " tool, giving it the context it needs. The tool returns a receipt immediately; finish this turn without polling. You will be automatically resumed when the answer arrives. " + mcp.ToolPrefix + mcp.ToolList + " shows the current list." + roster.String()
+		"ask it with the " + prefix + mcp.ToolAsk + " tool, giving it the context it needs. The tool returns a receipt immediately; finish this turn without polling. You will be automatically resumed when the answer arrives. " + prefix + mcp.ToolList + " shows the current list." + roster.String()
 }
 
 func clip(s string, n int) string {

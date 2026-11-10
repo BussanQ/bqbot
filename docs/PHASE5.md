@@ -2,6 +2,8 @@
 
 电脑入口位于桌面设置中的「伙伴的电脑」。每个 Bot 可以配置一台已有桌面：Boat 云 Sandbox、运行 Cua Driver 的 VM，或者这台宿主机。连接默认关闭；访问宿主机还必须单独勾选允许屏幕和输入设备访问。
 
+新增的 Linux 工作区通过 Workspace Bridge 提供 Xvnc、CDP、AT-SPI 和 WebRTC；启动与远程网络配置见 [工作区指南](WORKSPACE.md)。
+
 ## 配置与使用
 
 - **Boat**：API 地址使用 `https://boat.dev/api/v1`，填写已有的 Sandbox ID 和 API token 的环境变量名。Sandbox 必须处于可用状态，运行 X11 桌面并安装 `scrot`、`xdotool`。bqbot 不自动创建、收费、恢复或销毁云机器。

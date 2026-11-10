@@ -65,7 +65,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	h := harness.New(st, &driver.Claude{}, &driver.Codex{}, &driver.Pi{}, &driver.Grok{}, &driver.OpenAI{}, &driver.Echo{})
+	h := harness.New(st, &driver.Builtin{}, &driver.Claude{}, &driver.Codex{}, &driver.Pi{}, &driver.Grok{}, &driver.OpenAI{}, &driver.Echo{})
 	if len(os.Args) == 1 {
 		h.Host = computer.NewHost()
 		defer h.Host.Close()

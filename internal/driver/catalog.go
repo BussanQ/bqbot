@@ -16,7 +16,7 @@ func Catalog(engine string, settings EngineSettings) []Model {
 		ids, efforts = []string{"anthropic/claude-sonnet-4-5", "openai/gpt-5"}, []string{"off", "minimal", "low", "medium", "high"}
 	case "grok":
 		ids = []string{"grok-code-fast-1", "grok-4"}
-	case "api", "openai":
+	case "api", "openai", "bqbot":
 		ids, efforts = []string{"gpt-4.1", "gpt-4.1-mini", "gpt-5"}, []string{"low", "medium", "high"}
 	case "echo":
 		ids = []string{"echo"}

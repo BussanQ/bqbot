@@ -11,6 +11,10 @@ export interface Action {
   text?: string;
   key?: string;
   direction?: string;
+  url?: string;
+  target?: string;
+  selector?: string;
+  ref?: string;
 }
 
 export interface ApprovalDecision {
@@ -50,6 +54,8 @@ export interface ComputerAction {
   action: Action;
   confirmed: boolean;
   permission: string;
+  sdp?: string;
+  stream_id?: string;
 }
 
 export interface ComputerConfig {

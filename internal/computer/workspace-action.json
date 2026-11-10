@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind"],
+  "properties": {
+    "kind": { "type": "string", "enum": ["screenshot","click","scroll","key","type","browser_tabs","browser_open","browser_read","browser_click","browser_fill","gui_tree","gui_invoke"] },
+    "x": { "type": "integer", "minimum": 0, "maximum": 32767 },
+    "y": { "type": "integer", "minimum": 0, "maximum": 32767 },
+    "direction": { "enum": ["up","down"] },
+    "key": { "enum": ["Return","Tab","Escape","BackSpace","Up","Down","Left","Right","Home","End","Page_Up","Page_Down","space"] },
+    "text": { "type": "string", "maxLength": 8192 },
+    "url": { "type": "string", "maxLength": 4096, "description": "HTTP(S) URL for browser_open" },
+    "target": { "type": "string", "maxLength": 128, "description": "Page ID from browser_tabs, defaults to the first page" },
+    "selector": { "type": "string", "maxLength": 1024, "description": "CSS selector from browser_read" },
+    "ref": { "type": "string", "maxLength": 256, "description": "Current accessible element reference returned by gui_tree" }
+  }
+}

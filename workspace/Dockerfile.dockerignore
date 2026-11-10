@@ -1,0 +1,9 @@
+**
+!workspace/
+!workspace/.build/
+!workspace/.build/bridge
+!workspace/desktop.py
+!workspace/start.sh
+!internal/
+!internal/computer/
+!internal/computer/workspace-action.json

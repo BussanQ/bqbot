@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-bqbot is a Go desktop chat application using MyGo's system WebView and local agent CLIs. `web/` contains the embedded HTML, CSS, JavaScript, and Markdown renderer; `webgo/desktop.go` provides the Go bridge. `webgo/` groups Go bridge code, shared conversation state/reducers, window startup, and retained legacy native views by feature; `web/assets.go` embeds the frontend resources. Backend packages live in `internal/`: `driver` adapts engines; `harness` coordinates turns; `service` exposes authenticated local APIs; `mcp` implements tools; `store` persists data. Go tests sit beside sources as `*_test.go`; JavaScript tests live in `tests/`. `docs/PLAN.md` is the roadmap; `docs/WEBVIEW.md` describes the desktop frontend. Packaging uses `mygo.json`; generated artifacts belong in ignored `build/`.
+bqbot is a Go desktop chat application. `web/` embeds the HTML, CSS and JavaScript frontend. `webgo/` contains the WebView bridge, conversation state and legacy native views. In `internal/`, `driver` runs the built-in bqbot and external engines, `harness` coordinates turns, `service` exposes authenticated local APIs, `mcp` provides tools, and `store` persists data. `workspace/` contains the optional Linux desktop, Go bridge and Compose setup. Go tests sit beside sources as `*_test.go`; JavaScript tests live in `tests/`. See `docs/PLAN.md`, `docs/WEBVIEW.md` and `docs/WORKSPACE.md`. MyGo packages the app using `mygo.json`.
 
 ## Build, Test, and Development Commands
 
@@ -10,6 +10,7 @@ Use the Go version declared in `go.mod` (currently 1.27.3).
 
 - `go run .`: launch the native desktop app.
 - `go build -o build/bqbot .`: compile the application binary.
+- `./workspace/build.sh`: build the Linux Workspace Bridge.
 - `mygo build`: package the application using an installed MyGo CLI and `mygo.json`.
 - `go test ./internal/store`: run one affected package's tests; substitute `driver`, `harness`, or `mcp` as needed.
 - `go test ./webgo -run 'TestDesktop|TestWebFrontend'`: test the WebView bridge and embedded assets.

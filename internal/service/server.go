@@ -29,6 +29,7 @@ const DefaultAddr = "127.0.0.1:8799"
 // Server owns an HTTP listener, but does not own or stop the harness.
 // Token is a credential: callers must never log it or put it in argv.
 type Server struct {
+	views        workspaceViews
 	remoteMu     sync.Mutex
 	remote       *remote.Gateway
 	URL          string
@@ -83,6 +84,12 @@ func Listen(h *harness.Harness, addr string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, ok := h.Drivers["bqbot"]; ok {
+		if err := h.Store.EnsureDefaultAgent(); err != nil {
+			ln.Close()
+			return nil, err
+		}
+	}
 	s := &Server{URL: "http://" + ln.Addr().String(), Token: hex.EncodeToString(secret[:]), h: h, discovery: make(map[string]discoveryFile), composio: composio.New()}
 	s.key = sha256.Sum256([]byte(s.Token))
 	s.automation, err = harness.NewAutomation(h)
@@ -115,6 +122,7 @@ func (s *Server) Close() error {
 	}
 	s.closed = true
 	err := s.http.Close()
+	s.revokeWorkspaceViews("")
 	s.remoteMu.Lock()
 	if s.remote != nil {
 		err = errors.Join(err, s.remote.Close())
@@ -146,9 +154,16 @@ func (s *Server) handler() http.Handler {
 	s.teamRoutes(mux)
 	s.voiceRoutes(mux)
 	s.computerRoutes(mux)
+	s.workspaceRoutes(mux)
 	mux.HandleFunc("GET /v1/bots", func(w http.ResponseWriter, r *http.Request) { v, e := s.h.Store.Bots(); result(w, v, e) })
 	mux.HandleFunc("PUT /v1/bots", s.saveBot)
-	mux.HandleFunc("DELETE /v1/bots/{bot}", s.withBot(func(w http.ResponseWriter, r *http.Request, b store.Bot) { result(w, struct{}{}, s.h.DeleteBot(b.ID)) }))
+	mux.HandleFunc("DELETE /v1/bots/{bot}", s.withBot(func(w http.ResponseWriter, r *http.Request, b store.Bot) {
+		err := s.h.DeleteBot(b.ID)
+		if err == nil {
+			s.revokeWorkspaceViews(b.ID)
+		}
+		result(w, struct{}{}, err)
+	}))
 	mux.HandleFunc("GET /v1/bots/{bot}/transcript", s.withBot(func(w http.ResponseWriter, r *http.Request, b store.Bot) {
 		v, e := s.h.Store.Transcript(b.ID)
 		result(w, v, e)

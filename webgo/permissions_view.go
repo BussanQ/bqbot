@@ -253,7 +253,7 @@ func (a *app) settingsView(c *ui.Context) {
 	ui.Column(c).Width(460).Gap(12).Children(func() {
 		ui.Text(c, "Engine settings").FontSize(17).FontWeight(700)
 		previous := a.settingsEngine
-		ui.Select(c, &a.settingsEngine, []string{"claude", "codex", "pi", "grok", "openai"}).Label("Settings engine")
+		ui.Select(c, &a.settingsEngine, []string{"bqbot", "claude", "codex", "pi", "grok", "openai"}).Label("Settings engine")
 		if previous != a.settingsEngine {
 			next := a.settingsEngine
 			a.settingsEngine = previous
@@ -261,7 +261,7 @@ func (a *app) settingsView(c *ui.Context) {
 			a.settingsEngine = next
 			a.loadEngineSettings()
 		}
-		if a.settingsEngine == "openai" {
+		if a.settingsEngine == "openai" || a.settingsEngine == "bqbot" {
 			ui.Text(c, "OpenAI compatible endpoint").FontSize(12)
 			ui.TextInput(c, &a.settingsURL).Label("API base URL").Placeholder("https://api.openai.com/v1")
 			ui.Text(c, "API key environment variable").FontSize(12)

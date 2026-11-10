@@ -54,7 +54,38 @@ func apiMessage(role, text string, images []Attachment) (map[string]any, error) 
 	return map[string]any{"role": role, "content": content}, nil
 }
 
+func apiHistory(in TurnInput) ([]any, error) {
+	messages := make([]any, 0, len(in.History)+2)
+	if in.System != "" {
+		messages = append(messages, map[string]string{"role": "system", "content": in.System})
+	}
+	for _, h := range in.History {
+		if h.Role != "user" && h.Role != "assistant" {
+			continue
+		}
+		msg, err := apiMessage(h.Role, h.Text, h.Attachments)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, msg)
+	}
+	msg, err := apiMessage("user", in.Text, in.Attachments)
+	if err != nil {
+		return nil, err
+	}
+	messages = append(messages, msg)
+	return messages, nil
+}
+
 func (d *OpenAI) Run(ctx context.Context, in TurnInput, emit func(Event)) error {
+	messages, err := apiHistory(in)
+	if err != nil {
+		return err
+	}
+	return d.round(ctx, in, messages, nil, nil, emit)
+}
+
+func (d *OpenAI) round(ctx context.Context, in TurnInput, messages []any, tools []any, calls *apiToolRound, emit func(Event)) error {
 	base := strings.TrimRight(in.Settings.BaseURL, "/")
 	if base == "" {
 		base = "https://api.openai.com/v1"
@@ -67,32 +98,13 @@ func (d *OpenAI) Run(ctx context.Context, in TurnInput, emit func(Event)) error 
 		u.Path = strings.TrimRight(u.Path, "/") + "/chat/completions"
 	}
 	keyEnv := in.Settings.APIKeyEnv
-	if keyEnv == "" {
+	if keyEnv == "" && (calls == nil || (u.Scheme == "https" && strings.EqualFold(u.Host, "api.openai.com"))) {
 		keyEnv = "OPENAI_API_KEY"
 	}
 	key := os.Getenv(keyEnv)
 	if in.Settings.APIKeyEnv != "" && key == "" {
 		return fmt.Errorf("API key environment variable %s is empty", keyEnv)
 	}
-	messages := make([]any, 0, len(in.History)+2)
-	if in.System != "" {
-		messages = append(messages, map[string]string{"role": "system", "content": in.System})
-	}
-	for _, h := range in.History {
-		if h.Role != "user" && h.Role != "assistant" {
-			continue
-		}
-		msg, err := apiMessage(h.Role, h.Text, h.Attachments)
-		if err != nil {
-			return err
-		}
-		messages = append(messages, msg)
-	}
-	msg, err := apiMessage("user", in.Text, in.Attachments)
-	if err != nil {
-		return err
-	}
-	messages = append(messages, msg)
 	model := in.Model
 	if model == "" {
 		model = "gpt-4.1"
@@ -101,6 +113,9 @@ func (d *OpenAI) Run(ctx context.Context, in TurnInput, emit func(Event)) error 
 		}
 	}
 	body := map[string]any{"model": model, "messages": messages, "stream": true}
+	if len(tools) > 0 {
+		body["tools"] = tools
+	}
 	if in.Effort != "" {
 		body["reasoning_effort"] = in.Effort
 	}
@@ -120,6 +135,9 @@ func (d *OpenAI) Run(ctx context.Context, in TurnInput, emit func(Event)) error 
 	client := d.Client
 	if client == nil {
 		client = http.DefaultClient
+		if calls != nil {
+			client = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		}
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -143,6 +161,9 @@ func (d *OpenAI) Run(ctx context.Context, in TurnInput, emit func(Event)) error 
 		payload := strings.Join(data, "\n")
 		data = nil
 		if payload == "[DONE]" {
+			if calls != nil && len(calls.Calls) != 0 && !calls.Complete {
+				return fmt.Errorf("%w: incomplete tool call", ErrTurnFailed)
+			}
 			finished = true
 			return nil
 		}
@@ -167,13 +188,20 @@ func (d *OpenAI) Run(ctx context.Context, in TurnInput, emit func(Event)) error 
 		}
 		c := chunk.Choices[0]
 		if len(c.Delta.ToolCalls) != 0 && string(c.Delta.ToolCalls) != "null" && string(c.Delta.ToolCalls) != "[]" {
-			return fmt.Errorf("%w: API tool calls are unsupported", ErrTurnFailed)
+			if calls == nil || len(tools) == 0 {
+				return fmt.Errorf("%w: API tool calls are unsupported", ErrTurnFailed)
+			}
+			if err := calls.add(c.Delta.ToolCalls); err != nil {
+				return err
+			}
 		}
 		if c.Delta.Content != "" {
 			emit(Event{Kind: EvText, Text: c.Delta.Content})
 		}
 		if c.FinishReason != nil && *c.FinishReason != "" {
-			if *c.FinishReason != "stop" {
+			if calls != nil && *c.FinishReason == "tool_calls" && len(calls.Calls) > 0 {
+				calls.Complete = true
+			} else if *c.FinishReason != "stop" || (calls != nil && len(calls.Calls) > 0) {
 				return fmt.Errorf("%w: API finish reason %s", ErrTurnFailed, *c.FinishReason)
 			}
 			finished = true

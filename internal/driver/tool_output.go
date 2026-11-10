@@ -148,9 +148,14 @@ func isToolContentBlock(kind string) bool {
 
 // MCPToolText extracts text and the failure flag from an MCP CallToolResult.
 func MCPToolText(raw json.RawMessage) (string, bool) {
+	output, failed := mcpToolContent(raw)
+	return LimitToolOutput(output), failed
+}
+
+func mcpToolContent(raw json.RawMessage) (string, bool) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) > 0 && (raw[0] == '"' || raw[0] == '[') {
-		return LimitToolOutput(contentText(raw)), false
+		return contentText(raw), false
 	}
 	var result struct {
 		Content, StructuredContent json.RawMessage
@@ -163,5 +168,5 @@ func MCPToolText(raw json.RawMessage) (string, bool) {
 	if output == "" {
 		output = rawOutputText(result.StructuredContent)
 	}
-	return LimitToolOutput(output), result.IsError
+	return output, result.IsError
 }

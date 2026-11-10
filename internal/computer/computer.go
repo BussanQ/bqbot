@@ -35,11 +35,34 @@ type Action struct {
 	Text      string `json:"text,omitempty"`
 	Key       string `json:"key,omitempty"`
 	Direction string `json:"direction,omitempty"`
+	URL       string `json:"url,omitempty"`
+	Target    string `json:"target,omitempty"`
+	Selector  string `json:"selector,omitempty"`
+	Ref       string `json:"ref,omitempty"`
 }
 
 func (a Action) Validate() error {
+	if len(a.Target) > 128 || len(a.Selector) > 1024 || len(a.Ref) > 256 {
+		return errors.New("invalid computer action arguments")
+	}
 	switch a.Kind {
-	case "screenshot":
+	case "screenshot", "browser_tabs", "browser_read", "gui_tree":
+	case "browser_open":
+		u, err := url.Parse(a.URL)
+		if err != nil || len(a.URL) > 4096 || u.Hostname() == "" || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") {
+			return errors.New("browser navigation requires an HTTP(S) URL without credentials")
+		}
+	case "browser_click", "browser_fill":
+		if a.Selector == "" {
+			return errors.New("a browser element selector is required")
+		}
+		if a.Kind == "browser_fill" && (len(a.Text) > 8192 || strings.ContainsRune(a.Text, 0)) {
+			return errors.New("invalid browser input text")
+		}
+	case "gui_invoke":
+		if a.Ref == "" {
+			return errors.New("an accessibility tree reference is required")
+		}
 	case "click":
 		if a.X < 0 || a.X > 32767 || a.Y < 0 || a.Y > 32767 {
 			return errors.New("click coordinates are out of range")
@@ -69,6 +92,7 @@ func (a Action) Validate() error {
 
 type Result struct {
 	Image  *driver.Attachment `json:"image,omitempty"`
+	Text   string             `json:"text,omitempty"`
 	Width  int                `json:"width,omitempty"`
 	Height int                `json:"height,omitempty"`
 }
@@ -92,6 +116,9 @@ func ExecuteWithHost(ctx context.Context, c store.ComputerConfig, a Action, host
 	}
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
+	if c.Provider != "workspace" && (strings.HasPrefix(a.Kind, "browser_") || strings.HasPrefix(a.Kind, "gui_")) {
+		return Result{}, errors.New("this operation requires a Workspace Bridge")
+	}
 	if c.Provider == "host" && c.URL == "" {
 		return cuaAction(ctx, host.call, a)
 	}
@@ -104,6 +131,9 @@ func ExecuteWithHost(ctx context.Context, c store.ComputerConfig, a Action, host
 	}
 	if c.Provider == "boat" {
 		return boat(ctx, c, token, a)
+	}
+	if c.Provider == "workspace" {
+		return workspaceAction(ctx, c, token, a)
 	}
 	return cua(ctx, c, token, a)
 }

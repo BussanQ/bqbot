@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -113,6 +114,37 @@ func (s *Store) readBots() ([]Bot, error) {
 
 func (s *Store) writeBots(bots []Bot) error {
 	return writeJSON(s.botsPath(), bots)
+}
+
+// EnsureDefaultAgent installs the starter once, including on upgrades. A
+// renamed or deleted starter stays that way on subsequent launches.
+func (s *Store) EnsureDefaultAgent() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	marker := filepath.Join(s.dir, "default-agent-v1.json")
+	if _, err := os.Stat(marker); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	bots, err := s.readBots()
+	if err != nil {
+		return err
+	}
+	id := "bqbot"
+	for _, bot := range bots {
+		if strings.EqualFold(bot.Name, "bqbot") {
+			return writeJSON(marker, bot.ID)
+		}
+		if bot.ID == id {
+			id = NewID()
+		}
+	}
+	bot := Bot{ID: id, Name: "bqbot", Engine: "bqbot", ApprovalMode: "ask", Created: time.Now(), Persona: "你是 bqbot，用户的工作区助手。根据实际可用的工具协助用户，用工具结果核实操作是否成功。"}
+	if err := s.writeBots(append(bots, bot)); err != nil {
+		return err
+	}
+	return writeJSON(marker, bot.ID)
 }
 
 // SaveBot adds the bot, or replaces the one with its ID.

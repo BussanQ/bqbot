@@ -2030,3 +2030,8 @@ select,
   user-select: text;
 }
 
+
+dialog:has([data-workspace-video]) { width: min(940px, calc(100vw - 40px)); }
+[data-workspace-video] { width: 100%; max-height: 55vh; object-fit: contain; background: #101311; border-radius: 8px; }
+.workspace-tools { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.workspace-tools summary { cursor: pointer; color: var(--accent); margin-bottom: 10px; }

@@ -124,3 +124,25 @@ func TestComputerConsultHasNoTools(t *testing.T) {
 		t.Fatal(e, in.MCP.Tools)
 	}
 }
+
+func TestWorkspaceDoesNotBreakTextOnlyChat(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(st, &driver.OpenAI{})
+	defer h.Close()
+	b := store.Bot{ID: "text", Engine: "openai"}
+	if err := st.SaveComputer(store.ComputerConfig{BotID: b.ID, Provider: "workspace", Enabled: true, URL: "http://127.0.0.1:1", TokenEnv: "VIEWER_TOKEN"}); err != nil {
+		t.Fatal(err)
+	}
+	job := &turn{ctx: context.Background(), bot: b}
+	in := driver.TurnInput{}
+	closeTools, err := h.prepareExternal(job, &in)
+	if closeTools != nil {
+		defer closeTools()
+	}
+	if err != nil || in.MCP != nil || job.external != nil {
+		t.Fatalf("text chat acquired a workspace tool: %v", err)
+	}
+}

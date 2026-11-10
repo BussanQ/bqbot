@@ -1,0 +1,22 @@
+services:
+  desktop:
+    image: bqbot-workspace:local
+    build:
+      context: ..
+      dockerfile: workspace/Dockerfile
+    environment:
+      BQBOT_WORKSPACE_TOKEN: ${BQBOT_WORKSPACE_TOKEN:?Set a private Workspace Bridge token}
+      BQBOT_ICE_HOST: ${BQBOT_ICE_HOST:-127.0.0.1}
+      BQBOT_MEDIA_PORT: ${BQBOT_MEDIA_PORT:-18444}
+    ports:
+      - "${BQBOT_BIND_ADDR:-127.0.0.1}:${BQBOT_BRIDGE_PORT:-18443}:18443/tcp"
+      - "${BQBOT_MEDIA_BIND_ADDR:-127.0.0.1}:${BQBOT_MEDIA_PORT:-18444}:${BQBOT_MEDIA_PORT:-18444}/udp"
+    volumes:
+      - profile:/home/agent/profile
+      - files:/home/agent/workspace
+    shm_size: 256mb
+    stop_grace_period: 20s
+    security_opt: [no-new-privileges:true]
+volumes:
+  profile: {}
+  files: {}
