@@ -32,7 +32,11 @@ func Catalog(engine string, settings EngineSettings) []Model {
 			continue
 		}
 		seen[id] = true
-		models = append(models, Model{ID: id, Name: id, Engine: engine, Efforts: append([]string(nil), efforts...)})
+		levels := efforts
+		if (engine == "api" || engine == "openai" || engine == "bqbot") && (id == "gpt-4.1" || id == "gpt-4.1-mini") {
+			levels = nil
+		}
+		models = append(models, Model{ID: id, Name: id, Engine: engine, Efforts: append([]string(nil), levels...)})
 	}
 	return models
 }

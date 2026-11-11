@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -63,11 +64,34 @@ func (s *Server) validateBot(b store.Bot, settings map[string]driver.EngineSetti
 			return invalid("invalid handoff session")
 		}
 	}
+	if !safeText(b.Model, 256) || strings.TrimSpace(b.Model) != b.Model {
+		return invalid("invalid model ID")
+	}
+	if b.Effort != "" && safeText(b.Effort, 64) {
+		// Saved options remain valid if a catalog is offline after a restart.
+		if old, err := s.h.Bot(b.ID); err == nil && old.Engine == b.Engine && old.Model == b.Model && old.Effort == b.Effort {
+			return nil
+		}
+		if cached, ok := s.modelCapabilities.Load(b.Engine); ok {
+			catalog := cached.(cachedModelCatalog)
+			if reflect.DeepEqual(catalog.settings, settings[b.Engine]) {
+				model := b.Model
+				if model == "" {
+					model = catalog.list.Default
+				}
+				if id := catalog.list.Aliases[model]; id != "" {
+					model = id
+				}
+				for _, m := range catalog.list.Models {
+					if m.ID == model {
+						return validateEffort(b.Effort, m.Efforts)
+					}
+				}
+			}
+		}
+	}
 	models := driver.Catalog(b.Engine, settings[b.Engine])
 	if b.Model != "" {
-		if !safeText(b.Model, 256) || strings.TrimSpace(b.Model) != b.Model {
-			return invalid("invalid model ID")
-		}
 		for _, m := range models {
 			if m.ID == b.Model {
 				return validateEffort(b.Effort, m.Efforts)
@@ -75,7 +99,7 @@ func (s *Server) validateBot(b store.Bot, settings map[string]driver.EngineSetti
 		}
 		// Providers add models independently of bqbot releases. A custom ID
 		// is valid without requiring a catalog update.
-		return validateEffort(b.Effort, []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"})
+		return validateEffort(b.Effort, []string{"off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "none"})
 	}
 	if b.Effort == "" {
 		return nil

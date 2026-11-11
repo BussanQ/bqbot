@@ -105,9 +105,12 @@ func Probe(ctx context.Context, bin string) (string, error) {
 // runLines starts bin with args, writes stdin to it, and hands every
 // non-empty stdout line to onLine. The first error onLine returns ends the
 // turn with that error once the process exits.
-func runLines(ctx context.Context, bin string, args []string, dir, stdin string, onLine func([]byte) error) error {
+func runLines(ctx context.Context, bin string, args, env []string, dir, stdin string, onLine func([]byte) error) error {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.Stdin = strings.NewReader(stdin)
 	stderr := &tail{max: 4096}
 	cmd.Stderr = stderr

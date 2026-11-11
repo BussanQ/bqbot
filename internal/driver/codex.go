@@ -28,7 +28,9 @@ func (d *Codex) Binary() string {
 // Args configures the app-server. Approvals always go through the client;
 // automatic approval modes are enforced by TurnInput.Approve, not CLI flags.
 func (d *Codex) Args(in TurnInput) []string {
-	args := []string{"app-server", "-c", `sandbox_mode="read-only"`, "-c", `approval_policy="untrusted"`, "-c", `mcp_servers={}`}
+	// The policy is sent on thread/start and thread/resume. Newer CLIs reject
+	// the legacy global approval_policy override before processing any request.
+	args := []string{"app-server", "-c", `sandbox_mode="read-only"`, "-c", `mcp_servers={}`}
 	// Replace inherited servers before adding this turn's scoped grant.
 	if s := in.MCP; s != nil {
 		key := "mcp_servers." + mcp.Server + "."

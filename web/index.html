@@ -139,7 +139,7 @@
                       <option value="queue">加入队列</option>
                       <option value="steer">追加指令</option>
                     </select
-                    ><button type="button" id="model" class="model-button" aria-haspopup="dialog" title="Agent、模型与权限">
+                    ><button type="button" id="model" class="model-button" aria-haspopup="dialog" aria-expanded="false" aria-controls="model-picker" title="模型与推理强度">
                       <span class="status-dot"></span
                       ><span id="model-name">默认模型</span
                       ><span data-icon="chevron"></span>
@@ -168,6 +168,12 @@
         </div>
       </main>
     </div>
+    <section id="model-picker" class="model-popover" role="dialog" aria-label="当前 Agent 对话选项" hidden>
+      <label><span>模型</span><select name="model"></select></label>
+      <label><span>工具权限</span><select name="approval_mode"><option value="ask">逐次询问</option><option value="auto-edit">自动编辑</option><option value="full-auto">完全自动</option></select></label>
+      <label><span>推理强度</span><select name="effort"></select></label>
+      <footer><small role="status"></small><button type="button" class="secondary" data-reload>刷新</button></footer>
+    </section>
     <dialog id="dialog" aria-labelledby="dialog-title">
       <div class="dialog-header">
         <h2 id="dialog-title"></h2>

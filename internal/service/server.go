@@ -29,22 +29,23 @@ const DefaultAddr = "127.0.0.1:8799"
 // Server owns an HTTP listener, but does not own or stop the harness.
 // Token is a credential: callers must never log it or put it in argv.
 type Server struct {
-	views        workspaceViews
-	remoteMu     sync.Mutex
-	remote       *remote.Gateway
-	URL          string
-	Token        string
-	h            *harness.Harness
-	http         *http.Server
-	key          [32]byte
-	mu           sync.Mutex
-	closed       bool
-	discovery    map[string]discoveryFile
-	composio     *composio.Client
-	automation   *harness.Automation
-	webhook      *http.Server
-	webhookURL   string
-	webhookError string
+	modelCapabilities sync.Map // engine name to last successful inventory
+	views             workspaceViews
+	remoteMu          sync.Mutex
+	remote            *remote.Gateway
+	URL               string
+	Token             string
+	h                 *harness.Harness
+	http              *http.Server
+	key               [32]byte
+	mu                sync.Mutex
+	closed            bool
+	discovery         map[string]discoveryFile
+	composio          *composio.Client
+	automation        *harness.Automation
+	webhook           *http.Server
+	webhookURL        string
+	webhookError      string
 }
 
 // Engine describes an installed driver and its configured model catalog.
@@ -155,6 +156,7 @@ func (s *Server) handler() http.Handler {
 	s.voiceRoutes(mux)
 	s.computerRoutes(mux)
 	s.workspaceRoutes(mux)
+	s.modelRoutes(mux)
 	mux.HandleFunc("GET /v1/bots", func(w http.ResponseWriter, r *http.Request) { v, e := s.h.Store.Bots(); result(w, v, e) })
 	mux.HandleFunc("PUT /v1/bots", s.saveBot)
 	mux.HandleFunc("DELETE /v1/bots/{bot}", s.withBot(func(w http.ResponseWriter, r *http.Request, b store.Bot) {

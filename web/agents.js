@@ -77,12 +77,10 @@ export function reasoningLevels(engine, model) {
   const models = engine.models || [];
   if (!model) return [...new Set(models.flatMap((m) => m.efforts || []))];
   const match = models.find((m) => m.id === model);
-  // The service accepts these values for custom IDs; the provider decides
-  // which of them the actual model supports at runtime.
-  return match ? match.efforts || [] : ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  return match ? match.efforts || [] : [...new Set(models.flatMap((m) => m.efforts || []))];
 }
 
-export function bindChatFields(form, bot, getEngines) {
+export function bindChatFields(form, bot, getEngines, loadModels) {
   const { engine, model, effort, approval_mode: permission } = form.elements;
   const choices = form.querySelector(".model-choices");
   function update(search, level) {
@@ -97,7 +95,7 @@ export function bindChatFields(form, bot, getEngines) {
     form.querySelector("[data-custom-model]").hidden = !custom;
     let levels = reasoningLevels(entry, model.value);
     // Preserve a saved choice while the initial catalog request is in flight.
-    if (!entry && level && !levels.includes(level)) levels = [...levels, level];
+    if ((!entry || entry.loading || (bot.engine === engine.value && model.value === (bot.model || "") && level === bot.effort)) && level && !levels.includes(level)) levels = [...levels, level];
     effort.replaceChildren(new Option("引擎默认", ""), ...levels.map((v) => new Option(v, v)));
     effort.value = levels.includes(level) ? level : "";
     effort.closest("label").hidden = !levels.length;
@@ -118,6 +116,7 @@ export function bindChatFields(form, bot, getEngines) {
   engine.onchange = () => {
     if (!bot.id && form.elements.name?.value === agentName(previousEngine)) form.elements.name.value = agentName(engine.value);
     previousEngine = engine.value;
+    loadModels?.(engine.value);
     model.value = "";
     permission.value = "ask";
     update(false, "");
@@ -143,6 +142,7 @@ export function bindChatFields(form, bot, getEngines) {
     engine.value = selected;
     update(document.activeElement === model, level || "");
   }
+  loadModels?.(bot.engine);
   syncCatalog();
   return syncCatalog;
 }

@@ -219,6 +219,9 @@ func (d *Desktop) Action(r WebAction) (json.RawMessage, error) {
 		} else {
 			err = a.api.StopThread(r.ID)
 		}
+	case "model-options":
+		err = a.api.SetModelOptions(r.ID, r.Bot)
+		refresh = true
 	case "save-bot":
 		_, exists := a.bot(r.Bot.ID)
 		if r.Bot.ID == "" {
@@ -373,4 +376,19 @@ func (d *Desktop) OpenWorkDir(id string) error {
 		return err
 	}
 	return mygo.Shell.OpenPath(path)
+}
+
+// Models can wait for a CLI without blocking snapshots, edits or streamed messages.
+func (d *Desktop) Models(engine string) (json.RawMessage, error) {
+	d.mu.Lock()
+	api, closed := d.app.api, d.closed
+	d.mu.Unlock()
+	if closed {
+		return nil, errors.New("desktop is closed")
+	}
+	list, err := api.ModelCatalog(engine)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(list)
 }

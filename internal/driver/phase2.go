@@ -40,10 +40,11 @@ type HistoryMessage struct {
 
 // Model is an entry in an engine's model catalog.
 type Model struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Engine  string   `json:"engine"`
-	Efforts []string `json:"efforts,omitempty"`
+	DefaultEffort string   `json:"default_effort,omitempty"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Engine        string   `json:"engine"`
+	Efforts       []string `json:"efforts,omitempty"`
 }
 
 // EngineSettings configure an engine without putting credentials in UI responses.

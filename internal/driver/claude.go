@@ -97,7 +97,16 @@ func (d *Claude) Run(ctx context.Context, in TurnInput, emit func(Event)) error 
 	if in.Settings.Path != "" {
 		bin = in.Settings.Path
 	}
-	if err := runLines(ctx, bin, d.Args(in), in.Dir, prompt, p.line); err != nil {
+	settings, defaults, clean, err := claudeModelSettings()
+	if err != nil {
+		return err
+	}
+	defer clean()
+	args := d.Args(in)
+	if settings != "" {
+		args = append(args, "--settings", settings)
+	}
+	if err := runLines(ctx, bin, args, defaults.childEnv, in.Dir, prompt, p.line); err != nil {
 		if in.Cursor != "" && !p.sawText && !p.sawTool && !errors.Is(err, context.Canceled) && claudeSessionMissing(err.Error()) {
 			return fmt.Errorf("%w: %v", ErrSessionExpired, err)
 		}

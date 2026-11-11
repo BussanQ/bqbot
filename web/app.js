@@ -1,3 +1,4 @@
+import { createModelPicker } from "./model-picker.js";
 import { escapeHTML as esc, markdown } from "./markdown.js";
 import { createToolsUI } from "./tools.js";
 import { createRemoteUI } from "./remote.js";
@@ -381,10 +382,7 @@ function renderComposer() {
         ? (steerable ? "加入队列，或向当前轮次追加指令…" : "继续输入，消息会加入队列…")
         : `发消息给 ${currentRoom()?.name || b?.name || "伙伴"}…`;
   $("attach").disabled = disabled;
-  $("model").disabled = disabled || !b || !!c?.room_id;
-  $("model-name").textContent = currentRoom()
-    ? "团队协作"
-    : [agentName(b?.engine), b?.model, b?.effort].filter(Boolean).join(" · ");
+  modelPicker.render(b, !disabled && !!b && !c.room_id, !!c?.room_id);
   $("send-mode").hidden = !steerable;
   if ($("send-mode").hidden) $("send-mode").value = "queue";
   $("steer-hint").hidden = $("send-mode").hidden;
@@ -455,6 +453,7 @@ function field(label, name, value = "", options = {}) {
   return `<label class="form-field"><span>${esc(label)}</span>${control}</label>`;
 }
 function openDialog(title, body, onSubmit) {
+  modelPicker.close();
   const generation = ++dialogGeneration;
   syncAgentFields = null;
   $("dialog-body").onclick = null;
@@ -502,16 +501,16 @@ function openAgentPicker() {
   renderAgentDirectory($("dialog-body").firstElementChild, state, icon);
 }
 
-function openBot(b, { engine, optionsOnly = false } = {}) {
+function openBot(b, { engine } = {}) {
   if (!b && !engine) return openAgentPicker();
   const original = b || { engine, name: agentName(engine), approval_mode: "ask" };
-  const profile = optionsOnly ? "" : field("伙伴名称", "name", original.name, { required: true, max: 120 });
-  const details = optionsOnly ? "" : `<details class="agent-profile-details"${b ? " open" : ""}><summary>伙伴资料</summary>
+  const profile = field("伙伴名称", "name", original.name, { required: true, max: 120 });
+  const details = `<details class="agent-profile-details"${b ? " open" : ""}><summary>伙伴资料</summary>
     ${field("头像文字 / Emoji", "avatar", original.avatar, { max: 8, placeholder: "留空使用名字首字" })}
     ${field("角色与工作方式", "persona", original.persona, { textarea: true })}</details>`;
-  const computer = b && !optionsOnly ? `<section class="menu-group settings-links"><h3>电脑</h3><div class="menu-items"><button type="button" data-bot-computer>${icon("monitor")}<span><strong>伙伴的电脑</strong><small data-computer-status>正在读取…</small></span>${icon("next")}</button></div></section><p class="form-help">配置电脑会离开此页面，未保存的伙伴修改不会保留。</p>` : "";
+  const computer = b ? `<section class="menu-group settings-links"><h3>电脑</h3><div class="menu-items"><button type="button" data-bot-computer>${icon("monitor")}<span><strong>伙伴的电脑</strong><small data-computer-status>正在读取…</small></span>${icon("next")}</button></div></section><p class="form-help">配置电脑会离开此页面，未保存的伙伴修改不会保留。</p>` : "";
   openDialog(
-    optionsOnly ? `${b.name} · 对话选项` : b ? "编辑 AI 伙伴" : "添加 AI 伙伴",
+    b ? "编辑 AI 伙伴" : "添加 AI 伙伴",
     `<form>${profile}${chatFields(field, original)}
       ${b ? '<p class="form-help">此设置适用于这位伙伴的所有会话，从下一轮起生效。更换 Agent 或模型后会保留聊天记录，重新建立引擎会话。</p>' : ""}
       ${details}${computer}${dialogActions(b ? "保存更改" : "创建并开始对话")}</form>`,
@@ -525,7 +524,7 @@ function openBot(b, { engine, optionsOnly = false } = {}) {
     },
   );
   const form = $("dialog-body").querySelector("form");
-  syncAgentFields = bindChatFields(form, original, () => state.engines || []);
+  syncAgentFields = bindChatFields(form, original, () => modelPicker.entries(), (engine) => modelPicker.load(engine));
   if (!computer) return;
   const status = form.querySelector("[data-computer-status]");
   computerUI
@@ -600,6 +599,7 @@ async function openSettings(preferred, fromPicker = false) {
     async () => {
       keep();
       await mutate({ kind: "save-settings", settings });
+      modelPicker.clear(); renderComposer();
       if (fromPicker && form.isConnected && $("dialog").open) openAgentPicker();
       notify("引擎设置已保存");
     },
@@ -722,7 +722,7 @@ function openMenu() {
         [
           "伙伴",
           [
-            ["edit", "编辑伙伴与模型", "settings"],
+            ["edit", "伙伴配置", "settings"],
             ["pin", b?.pinned ? "取消置顶" : "置顶伙伴", "pin"],
             ["unread", "标记为未读", "chat"],
             ["clone", "复制伙伴", "copy"],
@@ -964,9 +964,12 @@ $("welcome").addEventListener("click", handleAgentChoice);
 $("dialog").addEventListener("click", handleAgentChoice);
 $("new-room").onclick = () => openRoom();
 $("new-thread").onclick = openThread;
-$("model").onclick = () => {
-  if (currentBot() && !currentRoom()) openBot(currentBot(), { optionsOnly: true });
-};
+const modelPicker = createModelPicker({
+  getBot: currentBot, getKey: () => conversationKey, getEngines: () => state.engines || [],
+  read: (engine) => bridge("Models", engine),
+  save: (id, bot) => mutate({ kind: "model-options", id, bot }),
+  updated: () => { renderComposer(); if ($("dialog").open) syncAgentFields?.(); },
+});
 $("details").onclick = () => {
   detailsOpen = !detailsOpen;
   renderInspector();

@@ -181,6 +181,10 @@ export const Desktop = {
   copy(text: string): Promise<void> {
     return call("Desktop.Copy", text);
   },
+  /** Models can wait for a CLI without blocking snapshots, edits or streamed messages. */
+  models(engine: string): Promise<unknown> {
+    return call("Desktop.Models", engine);
+  },
   /** OpenLink only opens web URLs outside the privileged application page. */
   openLink(raw: string): Promise<void> {
     return call("Desktop.OpenLink", raw);

@@ -290,22 +290,7 @@ func (d *Grok) Run(ctx context.Context, in TurnInput, emit func(Event)) error {
 		method = "session/load"
 		params["sessionId"] = in.Cursor
 	}
-	var session struct {
-		ID     string `json:"sessionId"`
-		Models *struct {
-			Current   string `json:"currentModelId"`
-			Available []struct {
-				ID string `json:"modelId"`
-			} `json:"availableModels"`
-		} `json:"models"`
-		ConfigOptions []struct {
-			ID       string `json:"id"`
-			Category string `json:"category"`
-			Options  []struct {
-				Value string `json:"value"`
-			} `json:"options"`
-		} `json:"configOptions"`
-	}
+	var session acpModelSession
 	if err := c.call(method, params, &session); err != nil {
 		if method == "session/load" && acpExpired(err) {
 			return fmt.Errorf("%w: %v", ErrSessionExpired, err)
@@ -320,17 +305,29 @@ func (d *Grok) Run(ctx context.Context, in TurnInput, emit func(Event)) error {
 		return fmt.Errorf("%w: ACP did not return a session ID", ErrTurnFailed)
 	}
 	if in.Model != "" {
-		if err := c.call("session/set_model", map[string]any{"sessionId": sessionID, "modelId": in.Model}, nil); err != nil {
+		method, params := "session/set_model", map[string]any{"sessionId": sessionID, "modelId": in.Model}
+		for _, opt := range session.ConfigOptions {
+			if opt.model() {
+				method = "session/set_config_option"
+				params = map[string]any{"sessionId": sessionID, "configId": opt.ID, "value": in.Model}
+				break
+			}
+		}
+		var updated acpModelSession
+		if err := c.call(method, params, &updated); err != nil {
 			return err
+		}
+		if updated.ConfigOptions != nil {
+			session.ConfigOptions = updated.ConfigOptions
 		}
 	}
 	if in.Effort != "" {
 		// ACP exposes provider-specific effort settings through advertised config options.
 		for _, option := range session.ConfigOptions {
-			if option.Category != "thought_level" && option.ID != "reasoning_effort" && option.ID != "effort" {
+			if !option.effort() {
 				continue
 			}
-			for _, value := range option.Options {
+			for _, value := range option.choices() {
 				if value.Value == in.Effort {
 					if err := c.call("session/set_config_option", map[string]any{"sessionId": sessionID, "configId": option.ID, "value": in.Effort}, nil); err != nil {
 						return err
