@@ -80,6 +80,9 @@ func (h *Harness) Close() error {
 	hd := h.hand
 	h.hand = nil
 	waits := h.cancelRoutesLocked(func(*roomRoute) bool { return true })
+	for id := range h.queues {
+		h.stopLocked(id)
+	}
 	for id, t := range h.running {
 		h.stopLocked(id)
 		waits = append(waits, t.done)

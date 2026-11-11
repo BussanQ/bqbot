@@ -5,7 +5,7 @@ The desktop UI accesses them through the authenticated HTTP/SSE service.
 
 ## Scheduling and lifecycle
 
-Each bot retains one FIFO across main, named, handoff, and channel turns.
+Each bot runs one turn at a time, in admission order among ready turns. A channel member awaiting a peer remains available for direct messages and handoffs.
 Approvals remain addressed by bot ID. Named/private handoff conversations use
 independent store thread cursors. Channel turns replay the shared transcript
 with speaker attribution, channel instructions, room memory, and room workdir;
@@ -30,8 +30,7 @@ tracked until workers acknowledge cancellation. Removing a room member cancels
 its queued/running room work and related handoffs; prepare rechecks membership.
 In-flight Auto HTTP requests are canceled by stop/edit/delete/shutdown and
 cannot admit work afterward. Auto chooses an exact eligible member ID from a
-bounded OpenAI-compatible response and otherwise falls back to lead. Mentions
-of member names or IDs take precedence and can select multiple members.
+bounded OpenAI-compatible response to read first and otherwise falls back to the lead. A message with mentions schedules only the named members and scopes handoffs to those members. Without mentions, every member reads the shared transcript in turn and may silently pass. A new peer reply can wake an earlier reader once per user message.
 
 ## Events and UI integration
 

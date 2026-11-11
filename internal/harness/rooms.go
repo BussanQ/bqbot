@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"bqbot/internal/driver"
 	"bqbot/internal/store"
@@ -67,6 +68,7 @@ func (h *Harness) SaveRoom(room store.Room) error {
 			}
 		}
 	}
+	h.startRoomHeadsLocked()
 	saved, err := h.Store.Room(room.ID)
 	if err != nil {
 		return err
@@ -100,8 +102,7 @@ func (h *Harness) DeleteRoom(id string) error {
 	return err
 }
 
-// SendRoom records one shared user entry and schedules each explicitly mentioned
-// member, or the selected lead/Auto member. Routing is bounded and cancellable.
+// SendRoom records one shared user entry. Mentions select the participants for this message.
 func (h *Harness) SendRoom(id, text string, attachments []driver.Attachment) (store.Message, error) {
 	if err := validateAttachments(attachments); err != nil {
 		return store.Message{}, err
@@ -129,7 +130,8 @@ func (h *Harness) SendRoom(id, text string, attachments []driver.Attachment) (st
 	route := &roomRoute{room: room, ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	h.routing[route] = true
 	h.mu.Unlock()
-	targets := roomMentions(room, bots, text)
+	mentions := roomMentions(room, bots, text)
+	targets := mentions
 	if len(targets) == 0 {
 		target := room.LeadID
 		if room.ReplyMode == "auto" {
@@ -137,6 +139,11 @@ func (h *Harness) SendRoom(id, text string, attachments []driver.Attachment) (st
 		}
 		if target != "" {
 			targets = []string{target}
+		}
+		for _, id := range room.Members {
+			if id != target {
+				targets = append(targets, id)
+			}
 		}
 	}
 	h.mu.Lock()
@@ -157,6 +164,7 @@ func (h *Harness) SendRoom(id, text string, attachments []driver.Attachment) (st
 		return store.Message{}, errors.New("channel changed during routing; retry message")
 	}
 	user := store.Message{ID: store.NewID(), Role: "user", Text: text, Attachments: append([]driver.Attachment(nil), attachments...), At: time.Now()}
+	round := &roomRound{}
 	var turns []*turn
 	for _, botID := range targets {
 		if !member(room, botID) || h.deleting[botID] {
@@ -166,9 +174,6 @@ func (h *Harness) SendRoom(id, text string, attachments []driver.Attachment) (st
 		if e != nil {
 			return store.Message{}, e
 		}
-		if h.Drivers[bot.Engine] == nil {
-			return store.Message{}, errors.New("channel member engine unavailable")
-		}
 		thread, e := h.Store.RoomThread(id, botID)
 		if e != nil {
 			return store.Message{}, e
@@ -177,6 +182,8 @@ func (h *Harness) SendRoom(id, text string, attachments []driver.Attachment) (st
 		t.thread = thread
 		t.roomID = id
 		t.roomUserRecorded = true
+		t.round = round
+		t.mentionedMembers = mentions
 		turns = append(turns, t)
 	}
 	if len(turns) == 0 {
@@ -210,7 +217,7 @@ func member(room store.Room, id string) bool {
 }
 func roomMentions(room store.Room, bots []store.Bot, text string) []string {
 	var result []string
-	lower := strings.ToLower(text)
+	lower := strings.ReplaceAll(strings.ToLower(text), "＠", "@")
 	for _, b := range bots {
 		if !member(room, b.ID) {
 			continue
@@ -225,8 +232,10 @@ func roomMentions(room store.Room, bots []store.Bot, text string) []string {
 				}
 				i += start
 				end := i + len(needle)
-				before := i == 0 || mentionBoundary([]rune(lower[:i])[len([]rune(lower[:i]))-1])
-				after := end == len(lower) || mentionBoundary([]rune(lower[end:])[0])
+				prev, _ := utf8.DecodeLastRuneInString(lower[:i])
+				next, _ := utf8.DecodeRuneInString(lower[end:])
+				before := i == 0 || mentionBoundary(prev) || unicode.Is(unicode.Han, prev)
+				after := end == len(lower) || mentionBoundary(next)
 				if before && after {
 					found = true
 					break
@@ -242,7 +251,7 @@ func roomMentions(room store.Room, bots []store.Bot, text string) []string {
 	return result
 }
 func mentionBoundary(r rune) bool {
-	return unicode.IsSpace(r) || strings.ContainsRune(",.:;!?，。；：！？()[]{}", r)
+	return unicode.IsSpace(r) || strings.ContainsRune(",.:;!?，。；：！？、（）【】「」()[]{}", r)
 }
 
 // routeRoom only accepts an exact eligible ID. Every error, uncertainty, missing
@@ -268,7 +277,7 @@ func (h *Harness) routeRoomContext(parent context.Context, room store.Room, bots
 	}
 	roster, _ := json.Marshal(candidates)
 	body, _ := json.Marshal(map[string]any{"model": cfg.Model, "stream": false, "temperature": 0, "max_tokens": 100, "messages": []map[string]string{
-		{"role": "system", "content": "Choose the single best channel responder. Return only JSON {\"bot_id\":\"ID\"}. If uncertain return {}. Only use IDs in this roster: " + string(roster)},
+		{"role": "system", "content": "Choose the channel member who should consider replying first. Return only JSON {\"bot_id\":\"ID\"}. If uncertain return {}. Only use IDs in this roster: " + string(roster)},
 		{"role": "user", "content": clip(room.Instructions, 2000) + "\n\n" + clip(text, 8000)},
 	}})
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)

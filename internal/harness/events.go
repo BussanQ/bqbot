@@ -97,7 +97,7 @@ func (h *Harness) Snapshot() []Update {
 	sort.Strings(ids)
 	for _, id := range ids {
 		t := h.running[id]
-		u := Update{BotID: id, ThreadID: t.thread.ID, RoomID: t.roomID, Busy: true, Reply: clone(t.reply), Queued: len(h.queues[id]), Answering: t.askerName}
+		u := Update{BotID: id, ThreadID: t.thread.ID, RoomID: t.roomID, Busy: true, Reply: t.visibleReply(), Queued: len(h.queues[id]), Answering: t.askerName}
 		out = append(out, u)
 		keys := make([]string, 0, len(t.pending))
 		for key := range t.pending {

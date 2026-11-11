@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -65,10 +66,11 @@ type Harness struct {
 	closingScopes map[string]bool
 	jobs          map[*asyncJob]bool
 	routing       map[*roomRoute]bool
+	roomTurns     map[string][]*turn
 }
 
 func New(st *store.Store, drivers ...driver.Driver) *Harness {
-	h := &Harness{Store: st, Drivers: map[string]driver.Driver{}, running: map[string]*turn{}, queues: map[string][]*turn{}, deleting: map[string]bool{}, subscribers: map[*subscription]bool{}, closingScopes: map[string]bool{}, jobs: map[*asyncJob]bool{}, routing: map[*roomRoute]bool{}}
+	h := &Harness{Store: st, Drivers: map[string]driver.Driver{}, running: map[string]*turn{}, queues: map[string][]*turn{}, deleting: map[string]bool{}, subscribers: map[*subscription]bool{}, closingScopes: map[string]bool{}, jobs: map[*asyncJob]bool{}, routing: map[*roomRoute]bool{}, roomTurns: map[string][]*turn{}}
 	for _, d := range drivers {
 		h.Drivers[d.Name()] = d
 	}
@@ -87,6 +89,9 @@ type turn struct {
 	thread           store.Thread
 	roomID           string
 	roomUserRecorded bool
+	mentionedMembers []string // explicit recipients of the originating room message
+	round            *roomRound
+	revisit          bool
 	job              *asyncJob
 	wake             bool
 	dispatched       int
@@ -147,6 +152,7 @@ func newTurn(parent context.Context, bot store.Bot, user store.Message, from *tu
 	ctx, cancel := context.WithCancel(parent)
 	t := &turn{bot: bot, user: user, ctx: ctx, cancel: cancel, done: make(chan struct{}), pending: map[string]*pendingApproval{}, approvalIDs: map[string]bool{}, steer: make(chan string, 32), waiting: map[*turn]bool{}, reply: store.Message{ID: store.NewID(), Role: "assistant", At: time.Now()}}
 	if from != nil {
+		t.mentionedMembers = from.mentionedMembers
 		t.ancestors = append(append([]string{}, from.ancestors...), from.bot.ID)
 		t.chain = from.chain
 		t.consult = from.consult
@@ -187,13 +193,21 @@ func (h *Harness) enqueueLocked(t *turn) error {
 		t.cancel()
 		return errors.New("bot is closing")
 	}
-	if h.Drivers[t.bot.Engine] == nil {
+	if t.round == nil && h.Drivers[t.bot.Engine] == nil {
 		t.cancel()
 		return fmt.Errorf("engine %q is not available", t.bot.Engine)
 	}
+	if t.round != nil {
+		h.roomTurns[t.roomID] = append(h.roomTurns[t.roomID], t)
+	}
 	h.queues[id] = append(h.queues[id], t)
-	if err := h.publishLocked(t, Update{BotID: id, Busy: true, QueuedUser: clone(t.user)}); err != nil {
+	queued := Update{BotID: id, Busy: true}
+	if !t.roomUserRecorded {
+		queued.QueuedUser = clone(t.user)
+	}
+	if err := h.publishLocked(t, queued); err != nil {
 		h.queues[id] = h.queues[id][:len(h.queues[id])-1]
+		h.removeRoomTurnLocked(t)
 		t.cancel()
 		return err
 	}
@@ -202,13 +216,22 @@ func (h *Harness) enqueueLocked(t *turn) error {
 }
 
 func (h *Harness) nextLocked(id string) {
-	if h.running[id] != nil {
+	if h.closed || h.running[id] != nil {
 		return
 	}
 	for len(h.queues[id]) > 0 {
-		t := h.queues[id][0]
-		h.queues[id] = h.queues[id][1:]
+		// A member waiting for a peer must remain available for private work
+		// and delegated questions, including questions from that peer.
+		i := slices.IndexFunc(h.queues[id], func(t *turn) bool {
+			return t.round == nil || h.roomTurns[t.roomID][0] == t
+		})
+		if i < 0 {
+			return
+		}
+		t := h.queues[id][i]
+		h.queues[id] = slices.Delete(h.queues[id], i, i+1)
 		if err := t.contextErr(); err != nil {
+			h.removeRoomTurnLocked(t)
 			t.err = err
 			t.cancel()
 			h.publishLocked(t, Update{BotID: id, Busy: len(h.queues[id]) > 0})
@@ -227,6 +250,7 @@ func (h *Harness) Stop(id string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.stopLocked(id)
+	h.startRoomHeadsLocked()
 }
 func (h *Harness) stopLocked(id string) {
 	h.cancelRoutesLocked(func(r *roomRoute) bool { return member(r.room, id) })
@@ -244,6 +268,7 @@ func (h *Harness) cancelQueuedLocked(t *turn) {
 	for i, candidate := range q {
 		if candidate == t {
 			h.queues[t.bot.ID] = append(q[:i], q[i+1:]...)
+			h.removeRoomTurnLocked(t)
 			t.cancel()
 			t.err = context.Canceled
 			if err := h.publishLocked(t, Update{BotID: t.bot.ID, Busy: h.running[t.bot.ID] != nil}); err != nil {
@@ -280,6 +305,7 @@ func (h *Harness) DeleteBot(id string) error {
 			}
 		}
 	}
+	h.startRoomHeadsLocked()
 	h.mu.Unlock()
 	for _, done := range waits {
 		<-done
@@ -334,7 +360,7 @@ func (h *Harness) note(t *turn, line string) {
 	}
 	t.reply.Tools = append(t.reply.Tools, line)
 	t.output = true
-	h.publishLocked(t, Update{BotID: t.bot.ID, Reply: clone(t.reply), Busy: true})
+	h.publishLocked(t, Update{BotID: t.bot.ID, Reply: t.visibleReply(), Busy: true})
 }
 
 func (h *Harness) run(t *turn) {
@@ -382,6 +408,9 @@ func (h *Harness) run(t *turn) {
 	if t.err != nil {
 		err = errors.Join(err, t.err)
 	}
+	if t.round != nil && t.reply.Text == "" && err == nil && strings.TrimSpace(t.text.String()) != roomPass {
+		t.reply.Text = strings.TrimSpace(t.text.String())
+	}
 	stopped := errors.Is(err, context.Canceled) && t.err == nil
 	if stopped {
 		if t.reply.Text != "" {
@@ -414,14 +443,16 @@ func (h *Harness) run(t *turn) {
 	if stopped {
 		t.err = context.Canceled
 	}
+	h.advanceDiscussionLocked(t)
 	delete(h.running, t.bot.ID)
-	if e := h.publishLocked(t, Update{BotID: t.bot.ID, Reply: clone(t.reply), Done: true, Err: err, Busy: len(h.queues[t.bot.ID]) > 0}); e != nil {
+	if e := h.publishLocked(t, Update{BotID: t.bot.ID, Reply: t.visibleReply(), Done: true, Err: err, Busy: len(h.queues[t.bot.ID]) > 0}); e != nil {
 		t.err = errors.Join(t.err, e)
 	}
 	h.completeJobLocked(t)
 	close(t.done)
 	h.cleanCanceledJobsLocked()
 	h.nextLocked(t.bot.ID)
+	h.startRoomHeadsLocked()
 }
 
 func (h *Harness) prepare(t *turn) (driver.TurnInput, func(), error) {
@@ -477,7 +508,14 @@ func (h *Harness) prepare(t *turn) (driver.TurnInput, func(), error) {
 		return in, nil, err
 	}
 	t.recorded = true
-	if err = h.publishLocked(t, Update{BotID: b.ID, User: clone(t.user), Reply: clone(t.reply), Busy: true}); err != nil {
+	if t.round != nil {
+		t.reply.At = time.Now()
+	}
+	started := Update{BotID: b.ID, Reply: t.visibleReply(), Busy: true}
+	if !t.roomUserRecorded {
+		started.User = clone(t.user)
+	}
+	if err = h.publishLocked(t, started); err != nil {
 		return in, nil, err
 	}
 	dir, err := h.Store.WorkDir(b.ID)
@@ -507,8 +545,11 @@ func (h *Harness) prepare(t *turn) (driver.TurnInput, func(), error) {
 			}
 		}
 	}
+	if t.round != nil {
+		history = discussionHistory(t, history, &in)
+	}
 	for _, m := range history {
-		if m.ID == t.user.ID {
+		if m.ID == t.user.ID && !in.RoomReview {
 			continue
 		}
 		text := m.Text
@@ -516,7 +557,11 @@ func (h *Harness) prepare(t *turn) (driver.TurnInput, func(), error) {
 			text = m.From + ": " + text
 		}
 		if m.Role == "user" || m.Role == "assistant" {
-			in.History = append(in.History, driver.HistoryMessage{Role: m.Role, Text: text, Attachments: append([]driver.Attachment(nil), m.Attachments...)})
+			role := m.Role
+			if t.round != nil && role == "assistant" && m.BotID != "" && m.BotID != b.ID {
+				role = "user" // an attributed peer message, not this model's previous answer
+			}
+			in.History = append(in.History, driver.HistoryMessage{Role: role, Text: text, Attachments: append([]driver.Attachment(nil), m.Attachments...)})
 		}
 	}
 	if t.asker != "" && !t.wake {
@@ -559,10 +604,16 @@ func (h *Harness) prepare(t *turn) (driver.TurnInput, func(), error) {
 		for _, id := range room.Members {
 			other, e := h.Bot(id)
 			if e == nil {
-				in.System += "\n- " + other.Name + ": " + clip(other.Persona, 200)
+				in.System += "\n- " + other.Name + " (@" + id + "): " + clip(other.Persona, 200)
 			}
 		}
-		if in.MCP != nil {
+		if t.round != nil {
+			in.System += "\nThis conversation is shared with the room. Decide for yourself whether to respond as " + b.Name + ". Reply when addressed or when you have a useful contribution. Consider what others already said. When you have nothing to add, use no tools and output exactly " + roomPass + "."
+		}
+		if len(t.mentionedMembers) > 0 {
+			in.System += "\nOnly members mentioned by the user participate in this turn."
+		}
+		if in.MCP != nil && len(t.mentionedMembers) != 1 {
 			in.System += "\nUse ask_bot to delegate to a channel member. It returns a receipt immediately; finish the turn without polling. You will be resumed when the result arrives."
 		}
 		scope = t.roomID
@@ -601,7 +652,15 @@ func (h *Harness) emit(t *turn, e driver.Event) {
 			t.brk = false
 		}
 		t.text.WriteString(e.Text)
+		previous := t.reply.Text
 		t.reply.Text = t.text.String()
+		if t.round != nil && strings.HasPrefix(roomPass, strings.TrimSpace(t.reply.Text)) {
+			t.reply.Text = ""
+			return
+		}
+		if t.round != nil && previous == "" {
+			e.Text = t.reply.Text // include any buffered prefix of an ordinary reply
+		}
 	case driver.EvTool, driver.EvToolResult, driver.EvToolDelta:
 		t.output = true
 		e.Output = driver.LimitToolOutput(e.Output)
@@ -609,7 +668,7 @@ func (h *Harness) emit(t *turn, e driver.Event) {
 			return
 		}
 	}
-	h.publishLocked(t, Update{BotID: t.bot.ID, Reply: clone(t.reply), Busy: true, Event: &e})
+	h.publishLocked(t, Update{BotID: t.bot.ID, Reply: t.visibleReply(), Busy: true, Event: &e})
 }
 
 // Approvals, delegation and external tools have their own harness events.

@@ -106,10 +106,13 @@
                 <div id="pending"></div>
               </div>
               <div class="composer" id="composer">
+                <div id="mention-members" class="mention-members" role="listbox" aria-label="群聊成员" hidden></div>
                 <div id="attachments" class="attachments"></div>
                 <textarea
                   id="draft"
                   aria-label="消息"
+                  aria-controls="mention-members"
+                  aria-autocomplete="list"
                   rows="2"
                   placeholder="写下你的想法，让我们一起完成。"
                 ></textarea>

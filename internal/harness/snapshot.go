@@ -43,13 +43,16 @@ func (h *Harness) FullSnapshot() ([]Update, error) {
 		roomCopy := room
 		allMessages := append([]store.Message(nil), messages...)
 		var queued []store.Message
+		queuedTurns := 0
 		busy := false
 		// Every room snapshot projection carries all partial replies, so consumers
 		// replacing a room transcript cannot lose another concurrent speaker.
 		for _, b := range bots {
 			if t := h.running[b.ID]; t != nil && t.roomID == room.ID {
 				busy = true
-				allMessages = append(allMessages, *clone(t.reply))
+				if reply := t.visibleReply(); reply != nil {
+					allMessages = append(allMessages, *reply)
+				}
 				if !t.recorded && !t.roomUserRecorded {
 					allMessages = append(allMessages, *clone(t.user))
 				}
@@ -58,11 +61,14 @@ func (h *Harness) FullSnapshot() ([]Update, error) {
 		for _, b := range bots {
 			for _, t := range h.queues[b.ID] {
 				if t.roomID == room.ID {
-					queued = append(queued, *clone(t.user))
+					queuedTurns++
+					if !t.roomUserRecorded {
+						queued = append(queued, *clone(t.user))
+					}
 				}
 			}
 		}
-		u := Update{RoomID: room.ID, Room: &roomCopy, Sync: true, Sequence: h.sequence, Messages: allMessages, Busy: busy, Queued: len(queued), QueuedMessages: queued}
+		u := Update{RoomID: room.ID, Room: &roomCopy, Sync: true, Sequence: h.sequence, Messages: allMessages, Busy: busy || queuedTurns > 0, Queued: queuedTurns, QueuedMessages: queued}
 		// A channel can have several active speakers. Each active reply gets its own
 		// update so one speaker cannot overwrite another during reconciliation.
 		updates = append(updates, u)
@@ -72,8 +78,8 @@ func (h *Harness) FullSnapshot() ([]Update, error) {
 			if v.Busy || v.Queued > 0 {
 				v.Messages = allMessages
 				v.QueuedMessages = queued
-				v.Queued = len(queued)
-				v.Busy = busy
+				v.Queued = queuedTurns
+				v.Busy = busy || queuedTurns > 0
 				updates = append(updates, v)
 			}
 		}
@@ -88,7 +94,7 @@ func (h *Harness) snapshotWorkLocked(u *Update, match func(*turn) bool) {
 		u.ThreadID = t.thread.ID
 		u.Busy = true
 		u.Answering = t.askerName
-		u.Reply = clone(t.reply)
+		u.Reply = t.visibleReply()
 		if !t.recorded && !t.roomUserRecorded {
 			u.Messages = append(u.Messages, *clone(t.user))
 		}

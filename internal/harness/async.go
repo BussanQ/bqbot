@@ -177,6 +177,7 @@ func (h *Harness) finishAssignmentLocked(j *asyncJob, t *turn) {
 	wake := newTurn(context.Background(), bot, store.Message{ID: store.NewID(), Role: "user", From: t.bot.Name, Text: text, At: time.Now()}, nil)
 	wake.thread = thread
 	wake.roomID = j.roomID
+	wake.mentionedMembers = j.source.mentionedMembers
 	wake.wake = true
 	wake.depth = j.source.depth
 	wake.ancestors = append([]string{}, j.source.ancestors...)

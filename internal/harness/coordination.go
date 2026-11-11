@@ -97,6 +97,9 @@ func (h *Harness) coordinate(from *turn, req mcp.CoordinateRequest) ([]assignmen
 			if err != nil {
 				return nil, err
 			}
+			if !from.acceptsRoomTarget(bot.ID) {
+				return nil, errors.New("target was not mentioned in this message")
+			}
 			if !member(room, bot.ID) {
 				return nil, errors.New("target is not a member of this channel")
 			}

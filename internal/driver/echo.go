@@ -19,6 +19,10 @@ func (d *Echo) Name() string   { return "echo" }
 func (d *Echo) Binary() string { return "" }
 
 func (d *Echo) Run(ctx context.Context, in TurnInput, emit func(Event)) error {
+	// An offline echo has nothing to add to a reply already in the room.
+	if in.RoomReview {
+		return nil
+	}
 	cursor := in.Cursor
 	if cursor == "" {
 		cursor = fmt.Sprintf("echo-%d", d.n.Add(1))

@@ -45,6 +45,7 @@ type Event struct {
 
 // TurnInput is what a driver needs to run a turn.
 type TurnInput struct {
+	RoomReview   bool   // the triggering room message and subsequent peer replies are already in History
 	Text         string // the user's message
 	System       string // the bot's persona
 	Model        string // "" is the engine's default

@@ -118,6 +118,7 @@ func (h *Harness) cancelScopeLocked(id string) []<-chan struct{} {
 			}
 		}
 	}
+	h.startRoomHeadsLocked()
 	return waits
 }
 func (h *Harness) CloseThread(id string) error {

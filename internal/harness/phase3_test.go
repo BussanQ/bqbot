@@ -83,11 +83,16 @@ func TestThreadContextMemoryCompactionIsolation(t *testing.T) {
 }
 
 func TestRoomSharedContextMentionsAndIsolation(t *testing.T) {
-	inputs := make(chan driver.TurnInput, 8)
+	inputs := make(chan driver.TurnInput, 16)
 	h := testHarness(t, &testDriver{run: func(ctx context.Context, in driver.TurnInput, emit func(driver.Event)) error {
 		inputs <- in
 		emit(driver.Event{Kind: driver.EvSession, Cursor: "room-session"})
-		emit(driver.Event{Kind: driver.EvText, Text: "room reply"})
+		if in.RoomReview {
+			emit(driver.Event{Kind: driver.EvText, Text: "[[PA"})
+			emit(driver.Event{Kind: driver.EvText, Text: "SS]]"})
+		} else {
+			emit(driver.Event{Kind: driver.EvText, Text: "room reply"})
+		}
 		return nil
 	}})
 	a := savedBot(t, h)
@@ -108,6 +113,18 @@ func TestRoomSharedContextMentionsAndIsolation(t *testing.T) {
 	if !strings.Contains(first.System, "shared rules") || !strings.Contains(first.System, "channel memory") || first.Dir != room.WorkDir {
 		t.Fatalf("channel context %+v", first)
 	}
+	peer := receive(t, inputs)
+	if !strings.Contains(peer.System, "You are Bo,") || len(peer.History) != 2 || peer.History[0].Text != "hello" || peer.History[1].Text != "Ada: room reply" {
+		t.Fatalf("peer missed same-round history: %+v", peer)
+	}
+	cy := store.Bot{ID: "cy", Name: "Cy", Engine: "test"}
+	if err := h.Store.SaveBot(cy); err != nil {
+		t.Fatal(err)
+	}
+	room.Members = append(room.Members, cy.ID)
+	if err := h.SaveRoom(room); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := h.SendRoom(room.ID, "@Bo follow up", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -116,14 +133,30 @@ func TestRoomSharedContextMentionsAndIsolation(t *testing.T) {
 	if !strings.Contains(second.System, "You are Bo,") || second.Cursor != "" || len(second.History) != 2 || !strings.Contains(second.History[1].Text, "Ada: room reply") {
 		t.Fatalf("shared history %+v", second)
 	}
-	if _, err := h.SendRoom(room.ID, "@Ada @Bo both", nil); err != nil {
+	if len(inputs) != 0 {
+		t.Fatal("unmentioned member received a turn")
+	}
+	if _, err := h.SendRoom(room.ID, "请＠Ada、@Bo 共同回复", nil); err != nil {
 		t.Fatal(err)
 	}
-	receive(t, inputs)
-	receive(t, inputs)
 	waitJobs(t, h)
+	if len(inputs) != 2 {
+		t.Fatalf("expected two mentioned members, got %d turns", len(inputs))
+	}
+	participants := make(map[string]bool)
+	for range 2 {
+		in := receive(t, inputs)
+		for _, name := range []string{"Bo", "Ada"} {
+			if strings.Contains(in.System, "You are "+name+",") {
+				participants[name] = true
+			}
+		}
+	}
+	if !participants["Bo"] || !participants["Ada"] {
+		t.Fatalf("wrong participants: %v", participants)
+	}
 	transcript, _ := h.Store.RoomTranscript(room.ID)
-	if len(transcript) != 7 {
+	if len(transcript) != 6 {
 		t.Fatalf("duplicate shared entries: %+v", transcript)
 	}
 	for _, m := range transcript {
@@ -146,7 +179,7 @@ func TestRoomSharedContextMentionsAndIsolation(t *testing.T) {
 	}
 	found := false
 	for _, u := range snapshots {
-		if u.RoomID == room.ID && u.Room != nil && len(u.Messages) == 7 {
+		if u.RoomID == room.ID && u.Room != nil && len(u.Messages) == 6 {
 			found = true
 		}
 	}
@@ -446,7 +479,10 @@ func TestCloseAwaitsCanceledDelegation(t *testing.T) {
 func TestRoomMemberRemovalCancelsQueuedAndRunningWork(t *testing.T) {
 	starts := make(chan string, 4)
 	h := testHarness(t, &testDriver{run: func(ctx context.Context, in driver.TurnInput, emit func(driver.Event)) error {
-		starts <- in.Text
+		starts <- in.System
+		if strings.Contains(in.System, "You are Ada,") {
+			return nil
+		}
 		<-ctx.Done()
 		return ctx.Err()
 	}})
@@ -478,10 +514,8 @@ func TestRoomMemberRemovalCancelsQueuedAndRunningWork(t *testing.T) {
 	}
 	h.Stop(b.ID)
 	eventually(t, func() bool { return !h.Busy(b.ID) })
-	select {
-	case text := <-starts:
-		t.Fatalf("removed member ran: %q", text)
-	default:
+	if len(starts) != 0 {
+		t.Fatal("another member took over a canceled mention")
 	}
 	room.Members = append(room.Members, b.ID)
 	h.SaveRoom(room)
@@ -511,18 +545,22 @@ func TestRoomGrantScope(t *testing.T) {
 	}}, &driver.Echo{})
 	a := r.bot("Ada", "test", "")
 	b := r.bot("Bo", "echo", "")
+	unmentioned := r.bot("Cy", "echo", "")
 	outside := r.bot("Outside", "echo", "")
-	room := store.Room{ID: "room", Name: "Team", Members: []string{a.ID, b.ID}, LeadID: a.ID, ReplyMode: "lead"}
+	room := store.Room{ID: "room", Name: "Team", Members: []string{a.ID, b.ID, unmentioned.ID}, LeadID: a.ID, ReplyMode: "lead"}
 	r.h.SaveRoom(room)
-	r.h.SendRoom(room.ID, "discover", nil)
+	r.h.SendRoom(room.ID, "@Ada @Bo discover", nil)
 	g := receive(t, grants)
 	client := &mcp.HTTPBackend{URL: g.URL, Token: g.Token}
 	targets, err := client.ListRoomTargets(context.Background())
-	if err != nil || !strings.Contains(targets, b.ID) || strings.Contains(targets, outside.ID) {
+	if err != nil || !strings.Contains(targets, b.ID) || strings.Contains(targets, outside.ID) || strings.Contains(targets, unmentioned.ID) {
 		t.Fatalf("room targets %s %v", targets, err)
 	}
 	if _, err = client.AskBot(context.Background(), "Outside", "question"); err == nil {
 		t.Fatal("room grant delegated outside room")
+	}
+	if _, err = client.AskBot(context.Background(), "Cy", "question"); err == nil {
+		t.Fatal("room grant delegated to unmentioned member")
 	}
 	threads, err := client.ListThreads(context.Background())
 	if err != nil || strings.Contains(threads, `"id":"`+a.ID+`"`) {
@@ -563,6 +601,10 @@ func TestStopRoomCancelsInFlightAutoRouting(t *testing.T) {
 func TestRoomHandoffUsesSharedContextAndWakesOnce(t *testing.T) {
 	inputs := make(chan driver.TurnInput, 1)
 	r := newRig(t, &asker{}, &testDriver{run: func(ctx context.Context, in driver.TurnInput, emit func(driver.Event)) error {
+		if !strings.Contains(in.Text, "another of the person's bots, asks you this") {
+			emit(driver.Event{Kind: driver.EvText, Text: roomPass})
+			return nil
+		}
 		inputs <- in
 		emit(driver.Event{Kind: driver.EvText, Text: "channel answer"})
 		return nil

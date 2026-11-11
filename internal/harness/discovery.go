@@ -18,7 +18,7 @@ func (hd *handoff) allowedTarget(from *turn, id string) bool {
 		return true
 	}
 	room, err := hd.h.Store.Room(from.roomID)
-	return err == nil && member(room, id)
+	return err == nil && member(room, id) && from.acceptsRoomTarget(id)
 }
 
 // A tool grant can see its bot's private threads, handoffs it asked for, and

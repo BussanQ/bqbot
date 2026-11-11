@@ -1,3 +1,4 @@
+import { createMentionPicker } from "./mentions.js";
 import { createModelPicker } from "./model-picker.js";
 import { escapeHTML as esc, markdown } from "./markdown.js";
 import { createToolsUI } from "./tools.js";
@@ -168,6 +169,7 @@ function render() {
     key = c?.id || "",
     changed = key !== conversationKey;
   if (changed) {
+    mentions.close();
     conversationKey = key;
     $("send-mode").value = "queue";
     $("draft").value = drafts.get(key) || "";
@@ -186,6 +188,7 @@ function render() {
   renderMessages(changed);
   renderApprovals();
   renderComposer();
+  mentions.refresh();
   renderInspector();
   $("status").hidden = !state.status;
   if (state.status)
@@ -252,8 +255,8 @@ function renderHeader() {
   if (!c) return;
   const engine = state.engines?.find((e) => e.name === b?.engine);
   const missingCLI = !r && engine?.available === false && hasTools(engine.name);
-  const source = r ? `${r.members.length} 位伙伴 · ${r.reply_mode === "auto" ? "自动分配" : "负责人模式"}` : agentName(b?.engine) || "";
-  const status = c.closed ? "只读会话" : waitingForUser(c) || (c.busy ? "正在回复" :
+  const source = r ? `${r.members.length} 位伙伴 · 自主回复` : agentName(b?.engine) || "";
+  const status = c.closed ? "只读会话" : waitingForUser(c) || (c.busy ? (r ? "讨论中" : "正在回复") :
     missingCLI ? "未检测到 CLI" : "");
   $("conversation-header").innerHTML =
     `${r ? `<span class="avatar">${icon("hash")}</span>` : avatar(b || { name: "B" })}<div><h1>${esc(title)}</h1><p><span class="status-dot"></span>${esc([source, status].filter(Boolean).join(" · "))}</p></div><div class="header-actions">${missingCLI ? '<button class="secondary" data-repair-agent>配置 CLI</button>' : !r && b?.engine === "bqbot" ? '<button class="secondary" data-repair-agent>模型服务</button>' : ""}<button class="icon-button" data-menu aria-label="更多操作">${icon("dots")}</button></div>`;
@@ -354,7 +357,7 @@ function renderMessages(changed) {
   $("typing").hidden = !c?.busy;
   if (c?.busy) {
     const text = waitingForUser(c) || (c.answering
-      ? `正在回答 ${c.answering}…` : `${currentRoom()?.name || currentBot()?.name || "Agent"} 正在回复…`);
+      ? `正在回答 ${c.answering}…` : currentRoom() ? "伙伴们正在阅读群聊…" : `${currentBot()?.name || "Agent"} 正在回复…`);
     if ($("turn-status").textContent !== text) $("turn-status").textContent = text;
   }
 }
@@ -554,16 +557,16 @@ function openRoom(r) {
   openDialog(
     r ? "编辑协作空间" : "让伙伴们一起协作",
     `<form>${field("空间名称", "name", original.name, { required: true, max: 120, placeholder: "例如：产品工作室" })}<span class="form-help">参与伙伴</span>${state.bots.map((b) => `<label class="check-label"><input type="checkbox" name="members" value="${esc(b.id)}" ${original.members.includes(b.id) ? "checked" : ""}>${esc(b.name)} <span class="form-help">${esc(b.engine)}</span></label>`).join("")}<div class="form-row">${field("负责人", "lead_id", original.lead_id || state.bots[0].id, { select: state.bots.map((b) => [b.id, b.name]) })}${field(
-      "回复方式",
+      "优先发言",
       "reply_mode",
       original.reply_mode,
       {
         select: [
-          ["lead", "负责人回复"],
-          ["auto", "自动分配"],
+          ["lead", "负责人优先"],
+          ["auto", "由决策模型选择"],
         ],
       },
-    )}</div><p class="form-help">负责人必须加入参与伙伴。可在消息中 @ 伙伴；自动分配使用引擎设置中的决策模型。</p>${field("共享指令", "instructions", original.instructions, { textarea: true })}${field("工作目录", "work_dir", original.work_dir, { placeholder: "可选，使用本机绝对路径" })}${dialogActions(r ? "保存更改" : "创建空间")}</form>`,
+    )}</div><p class="form-help">@ 一位或多位伙伴时，仅被点名的伙伴参与回复。未点名时，全体伙伴自行决定是否发言。</p>${field("共享指令", "instructions", original.instructions, { textarea: true })}${field("工作目录", "work_dir", original.work_dir, { placeholder: "可选，使用本机绝对路径" })}${dialogActions(r ? "保存更改" : "创建空间")}</form>`,
     (data) =>
       mutate({
         kind: "save-room",
@@ -587,7 +590,7 @@ async function openSettings(preferred, fromPicker = false) {
   openDialog(
     preferred ? `配置 ${agentName(preferred)}` : "引擎设置",
     `<form>${select}<div id="engine-settings"></div>${preferred ? "" : settingsLinks([
-      ["data-routing", "route", "群聊决策模型", "协作空间自动分配时使用的模型"],
+      ["data-routing", "route", "群聊决策模型", "选择群聊中优先发言的伙伴"],
       ["data-tools-home", "tool", "工具与自动化", "MCP 工具、定时任务与触发器"],
       ["data-computer-home", "monitor", "伙伴的电脑", "本机控制、云桌面与 VM"],
       ["data-voice-home", "mic", "语音与通话", "听写、朗读和语音通话"],
@@ -634,7 +637,7 @@ async function openRouting() {
   const r = await action({ kind: "routing" });
   openDialog(
     "群聊决策模型",
-    `<form><p class="form-help">用于自动选择下一位回复的伙伴。</p>${field("API 地址", "base_url", r.base_url, { required: true })}${field("密钥环境变量", "api_key_env", r.api_key_env)}${field("模型 ID", "model", r.model)}${dialogActions("保存配置")}</form>`,
+    `<form><p class="form-help">群聊启用自动选择时，此模型决定哪位伙伴先阅读消息。</p>${field("API 地址", "base_url", r.base_url, { required: true })}${field("密钥环境变量", "api_key_env", r.api_key_env)}${field("模型 ID", "model", r.model)}${dialogActions("保存配置")}</form>`,
     (data) =>
       mutate({ kind: "save-routing", routing: Object.fromEntries(data) }),
   );
@@ -874,6 +877,9 @@ function openSearch() {
   requestAnimationFrame(() => form.elements.query.focus());
 }
 
+const mentions = createMentionPicker($("draft"), $("mention-members"),
+  () => (currentRoom()?.members || []).map(botByID).filter(Boolean), avatar);
+
 $("draft").addEventListener("input", () => {
   drafts.set(conversationKey, $("draft").value);
   resizeDraft();
@@ -886,6 +892,7 @@ async function send(steer = false) {
     text = $("draft").value,
     attachments = imageDrafts.get(key) || [];
   if (!text.trim() && !attachments.length) return;
+  mentions.close();
   sending.add(key);
   renderComposer();
   try {
@@ -916,7 +923,8 @@ async function send(steer = false) {
   }
 }
 $("draft").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+  if (mentions.handleKey(e)) return;
+  if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     send(e.metaKey || e.ctrlKey).catch(showError);
   }

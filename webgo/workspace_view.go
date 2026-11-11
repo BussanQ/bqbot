@@ -594,11 +594,7 @@ func (a *app) roomChat(c *ui.Context) {
 		ui.Row(c).Height(topBar(c)).Padding(0, 20).Gap(10).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(a.pal.hairline).DragWindow().Children(func() {
 			ui.Column(c).Grow(1).Gap(2).Children(func() {
 				ui.Text(c, "# "+r.Name).FontSize(15).FontWeight(700)
-				mode := "Lead"
-				if r.ReplyMode == "auto" {
-					mode = "Auto"
-				}
-				ui.Text(c, fmt.Sprintf("%d members · %s", len(r.Members), mode)).FontSize(11.5).TextColor(a.pal.muted)
+				ui.Text(c, fmt.Sprintf("%d members · open discussion", len(r.Members))).FontSize(11.5).TextColor(a.pal.muted)
 			})
 			if a.iconButton(c, editIcon, "Edit channel", "Members, reply rules and instructions").Clicked() {
 				a.openRoomForm(r)
@@ -623,7 +619,7 @@ func (a *app) roomChat(c *ui.Context) {
 		if rows == 0 {
 			ui.Column(c).Grow(1).Center().Gap(10).Children(func() {
 				ui.Text(c, "Welcome to #"+r.Name).FontSize(19).FontWeight(700)
-				ui.Text(c, "Mention a member, or let the reply rule choose.").FontSize(13).TextColor(a.pal.muted)
+				ui.Text(c, "Mention members to address just them. Without a mention, everyone can reply.").FontSize(13).TextColor(a.pal.muted)
 			})
 		} else {
 			ui.List(c, &t.list, rows, func(i int) {
@@ -752,10 +748,10 @@ func (a *app) roomFormView(c *ui.Context) {
 			if r.ReplyMode == "auto" {
 				mode = "Auto"
 			}
-			formField(c, "Reply rule", func() { ui.Select(c, &mode, []string{"Lead", "Auto"}).Label("Reply rule") })
+			formField(c, "First speaker", func() { ui.Select(c, &mode, []string{"Lead", "Auto"}).Label("First speaker") })
 			r.ReplyMode = strings.ToLower(mode)
 			if mode == "Auto" {
-				ui.Text(c, "The decision model chooses a member; uncertain decisions fall back to the lead.").FontSize(12).TextColor(a.pal.muted)
+				ui.Text(c, "Without a mention, the decision model chooses who goes first.").FontSize(12).TextColor(a.pal.muted)
 			}
 			formField(c, "Shared instructions", func() { ui.TextArea(c, &r.Instructions).Lines(3, 5).Label("Channel instructions") })
 			formField(c, "Working directory", func() {
