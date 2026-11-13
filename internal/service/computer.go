@@ -3,6 +3,7 @@ package service
 import (
 	"net/http"
 	"net/url"
+	"time"
 
 	"bqbot/internal/computer"
 	"bqbot/internal/store"
@@ -41,7 +42,7 @@ func (s *Server) computerRoutes(mux *http.ServeMux) {
 			fail(w, invalid(e.Error()))
 			return
 		}
-		err := s.saveComputer(v)
+		err := s.saveComputer(r.Context(), v)
 		result(w, v, err)
 	})
 	mux.HandleFunc("POST /v1/computers/{bot}/action", s.withBot(func(w http.ResponseWriter, r *http.Request, b store.Bot) {
@@ -63,7 +64,7 @@ func (s *Server) computerRoutes(mux *http.ServeMux) {
 			fail(w, invalid(e.Error()))
 			return
 		}
-		out, e := computer.ExecuteWithHost(r.Context(), cfg, v.Action, s.h.Host)
+		out, e := computer.ExecuteWithStore(r.Context(), cfg, v.Action, s.h.Host, s.h.Store)
 		result(w, out, e)
 	}))
 }
@@ -85,8 +86,20 @@ func (c *Client) Computers() (v []store.ComputerConfig, e error) {
 	return
 }
 func (c *Client) SaveComputer(v store.ComputerConfig) (out store.ComputerConfig, e error) {
-	e = c.do("PUT", "/v1/computers", v, &out)
+	e = c.computerRequest("PUT", "/v1/computers", v, &out)
 	return
+}
+func (c *Client) StartWorkspace(bot string) error {
+	return c.computerRequest("POST", "/v1/computers/"+url.PathEscape(bot)+"/start", struct{}{}, nil)
+}
+func (c *Client) computerRequest(method, path string, body, out any) error {
+	// First use may build the Linux image. Keep ordinary requests on the fast client.
+	long := *c
+	transport := c.http.Transport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 0
+	defer transport.CloseIdleConnections()
+	long.http = &http.Client{Transport: transport, CheckRedirect: c.http.CheckRedirect}
+	return long.doTimeout(method, path, body, out, 20*time.Minute)
 }
 func (c *Client) ComputerAction(botID string, v ComputerRequest) (out computer.Result, e error) {
 	e = c.do("POST", "/v1/computers/"+url.PathEscape(botID)+"/action", v, &out)

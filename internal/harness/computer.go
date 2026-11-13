@@ -54,7 +54,7 @@ func (h *Harness) prepareComputer(t *turn, g *externalGroup) error {
 			if dec.Decode(new(any)) != io.EOF {
 				return nil, errors.New("invalid computer action")
 			}
-			out, e := computer.ExecuteWithHost(bindHost(ctx), current, action, h.Host)
+			out, e := computer.ExecuteWithStore(bindHost(ctx), current, action, h.Host, h.Store)
 			if e != nil {
 				return nil, e
 			}

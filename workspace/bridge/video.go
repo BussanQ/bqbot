@@ -28,6 +28,7 @@ type viewer struct {
 	expires time.Time
 }
 type videoServer struct {
+	gate    inputGate
 	api     *webrtc.API
 	socket  *net.UDPConn
 	mu      sync.Mutex
@@ -109,7 +110,8 @@ func (s *videoServer) close() {
 
 func (s *videoServer) offer(w http.ResponseWriter, r *http.Request) {
 	var offer struct {
-		SDP string `json:"sdp"`
+		SDP     string `json:"sdp"`
+		Control bool   `json:"control"`
 	}
 	if !readJSON(w, r, &offer) {
 		return
@@ -161,6 +163,13 @@ func (s *videoServer) offer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
+		if offer.Control {
+			s.attachInput(ctx, dc)
+		} else {
+			dc.Close()
+		}
+	})
 	var once sync.Once
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		switch state {
@@ -193,7 +202,7 @@ func (s *videoServer) offer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	success = json.NewEncoder(w).Encode(map[string]string{"id": id, "sdp": pc.LocalDescription().SDP}) == nil
+	success = json.NewEncoder(w).Encode(map[string]any{"id": id, "sdp": pc.LocalDescription().SDP, "control": offer.Control}) == nil
 }
 
 func (s *videoServer) renew(w http.ResponseWriter, r *http.Request) {
@@ -217,7 +226,18 @@ func (s *videoServer) stop(w http.ResponseWriter, r *http.Request) {
 func captureVP8(ctx context.Context, track *webrtc.TrackLocalStaticSample) error {
 	ctx, cancel := context.WithCancel(ctx)
 	const rate = 12
-	cmd := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "x11grab", "-framerate", strconv.Itoa(rate), "-video_size", "1280x800", "-i", os.Getenv("DISPLAY"), "-an", "-c:v", "libvpx", "-pix_fmt", "yuv420p", "-deadline", "realtime", "-cpu-used", "8", "-threads", "2", "-lag-in-frames", "0", "-g", "12", "-b:v", "1200k", "-flush_packets", "1", "-f", "ivf", "pipe:1")
+	// Query the live root window rather than capturing a fixed rectangle.
+	size, err := exec.CommandContext(ctx, "xdotool", "getdisplaygeometry").Output()
+	if err != nil {
+		cancel()
+		return err
+	}
+	var width, height int
+	if _, err = fmt.Sscan(string(size), &width, &height); err != nil || width < 1 || height < 1 {
+		cancel()
+		return errors.New("invalid X11 desktop size")
+	}
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "x11grab", "-framerate", strconv.Itoa(rate), "-video_size", fmt.Sprintf("%dx%d", width, height), "-i", os.Getenv("DISPLAY"), "-an", "-c:v", "libvpx", "-pix_fmt", "yuv420p", "-deadline", "realtime", "-cpu-used", "8", "-threads", "2", "-lag-in-frames", "0", "-g", "12", "-b:v", "1200k", "-flush_packets", "1", "-f", "ivf", "pipe:1")
 	cmd.Stderr = os.Stderr
 	out, err := cmd.StdoutPipe()
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -25,6 +26,10 @@ import (
 const toolName = "workspace_action"
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--bridge-revision" {
+		fmt.Println("input-v1")
+		return
+	}
 	secret, err := hex.DecodeString(os.Getenv("BQBOT_WORKSPACE_HASH"))
 	if err != nil || len(secret) != sha256.Size {
 		log.Fatal("invalid workspace authentication digest")
@@ -44,7 +49,7 @@ func main() {
 	}
 	defer video.close()
 	mux := http.NewServeMux()
-	mux.Handle("POST /mcp", &bridge{schema: raw, slot: make(chan struct{}, 1)})
+	mux.Handle("POST /mcp", &bridge{schema: raw, gate: &video.gate, slot: make(chan struct{}, 1)})
 	mux.HandleFunc("POST /streams", video.offer)
 	mux.HandleFunc("PUT /streams/{id}", video.renew)
 	mux.HandleFunc("DELETE /streams/{id}", video.stop)
@@ -71,6 +76,7 @@ func main() {
 }
 
 type bridge struct {
+	gate   *inputGate
 	schema json.RawMessage
 	slot   chan struct{}
 }
@@ -143,6 +149,18 @@ func (b *bridge) execute(ctx context.Context, args json.RawMessage) (json.RawMes
 		defer func() { <-b.slot }()
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+	var op struct{ Kind string }
+	if err := json.Unmarshal(args, &op); err != nil {
+		return nil, err
+	}
+	switch op.Kind {
+	case "screenshot", "gui_tree", "browser_read", "browser_tabs":
+	default:
+		if !b.gate.TryRLock() {
+			return nil, errors.New("桌面已由用户接管，请在释放接管后重试")
+		}
+		defer b.gate.RUnlock()
 	}
 	cmd := exec.CommandContext(ctx, "/usr/bin/python3", "/opt/bqbot/desktop.py")
 	// A cancelled typing operation must also stop the helper's xdotool child.

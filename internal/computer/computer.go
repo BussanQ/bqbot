@@ -105,6 +105,11 @@ func Execute(ctx context.Context, c store.ComputerConfig, a Action) (Result, err
 
 // ExecuteWithHost also supports the driver owned by the desktop process.
 func ExecuteWithHost(ctx context.Context, c store.ComputerConfig, a Action, host *Host) (Result, error) {
+	return ExecuteWithStore(ctx, c, a, host, nil)
+}
+
+// ExecuteWithStore resolves managed workspace credentials for an authorized action.
+func ExecuteWithStore(ctx context.Context, c store.ComputerConfig, a Action, host *Host, st *store.Store) (Result, error) {
 	if e := c.Validate(); e != nil {
 		return Result{}, e
 	}
@@ -122,6 +127,13 @@ func ExecuteWithHost(ctx context.Context, c store.ComputerConfig, a Action, host
 	if c.Provider == "host" && c.URL == "" {
 		return cuaAction(ctx, host.call, a)
 	}
+	if c.Provider == "workspace" {
+		resolved, token, err := workspaceConnection(c, st)
+		if err != nil {
+			return Result{}, err
+		}
+		return workspaceAction(ctx, resolved, token, a)
+	}
 	token := ""
 	if c.TokenEnv != "" {
 		token = os.Getenv(c.TokenEnv)
@@ -131,9 +143,6 @@ func ExecuteWithHost(ctx context.Context, c store.ComputerConfig, a Action, host
 	}
 	if c.Provider == "boat" {
 		return boat(ctx, c, token, a)
-	}
-	if c.Provider == "workspace" {
-		return workspaceAction(ctx, c, token, a)
 	}
 	return cua(ctx, c, token, a)
 }

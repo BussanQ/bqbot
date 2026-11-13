@@ -6,7 +6,7 @@
   "slug": "bqbot",
   "publisher": "BussanQ",
   "icon": "resources/icon.png",
-  "buildCommand": "python3 -I scripts/prepare-cua.py",
+  "buildCommand": "python3 -I scripts/prepare-assets.py",
   "macos": {
     "minimumSystemVersion": "13.0",
     "infoPlist": {

@@ -2057,8 +2057,17 @@ select,
 }
 
 
-dialog:has([data-workspace-video]) { width: min(940px, calc(100vw - 40px)); }
-[data-workspace-video] { width: 100%; max-height: 55vh; object-fit: contain; background: #101311; border-radius: 8px; }
+dialog:has(.computer-screen) { width: min(1080px, calc(100vw - 32px)); max-height: 94vh; }
+dialog:has(.computer-screen) .dialog-content { display: flex; flex-direction: column; overflow: hidden; padding: 10px 16px 14px; }
+#dialog-body:has(.computer-screen) { display: flex; flex-direction: column; min-height: 0; gap: 8px; }
+.computer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: none; }
+.computer-screen { position: relative; flex: 0 1 auto; min-height: 0; height: min(64vh, 65vw); background: #101311; outline-offset: 2px; }
+.computer-screen img, .computer-screen video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; user-select: none; }
+.computer-screen.controlled { outline: 2px solid var(--accent); touch-action: none; }
+.computer-screen.controlled > * { pointer-events: none; }
+.computer-more { min-height: 1.6em; overflow: auto; }
+.computer-more[open] { max-height: 25vh; }
+.computer-more > summary { cursor: pointer; color: var(--accent); }
 .workspace-tools { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
 .workspace-tools summary { cursor: pointer; color: var(--accent); margin-bottom: 10px; }
 

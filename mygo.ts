@@ -65,6 +65,7 @@ export interface ComputerConfig {
   host_consent: boolean;
   url: string;
   token_env?: string;
+  managed?: boolean;
   sandbox_id?: string;
 }
 

@@ -60,7 +60,7 @@ set -- build -platform "$platform"
 [ -z "$sign" ] || set -- "$@" -sign "$sign"
 
 echo "==> mygo $* ($(go version | awk '{print $3}'))"
-# The buildCommand (scripts/prepare-cua.py) reads RELEASE_TARGETS for the driver.
+# The packaging hook stages the platform driver and Linux workspace build context.
 RELEASE_TARGETS="$platform" go run github.com/egoist/mygo/cmd/mygo "$@"
 
 if [ ! -d "$app" ]; then

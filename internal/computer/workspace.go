@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 
 	"bqbot/internal/mcpgateway"
@@ -67,33 +66,20 @@ func workspaceAction(ctx context.Context, c store.ComputerConfig, token string, 
 }
 
 type StreamAnswer struct {
-	ID  string `json:"id"`
-	SDP string `json:"sdp"`
+	Control bool   `json:"control,omitempty"`
+	ID      string `json:"id"`
+	SDP     string `json:"sdp"`
 }
 
-func workspaceToken(c store.ComputerConfig) (string, error) {
-	if err := c.Validate(); err != nil {
-		return "", err
-	}
-	if !c.Enabled || c.Provider != "workspace" {
-		return "", errors.New("Workspace Bridge is not enabled")
-	}
-	t := os.Getenv(c.TokenEnv)
-	if t == "" || strings.ContainsAny(t, "\r\n") {
-		return "", errors.New("Workspace Bridge token environment variable is missing or invalid")
-	}
-	return t, nil
-}
-
-func OpenStream(ctx context.Context, c store.ComputerConfig, offer string) (StreamAnswer, error) {
-	token, err := workspaceToken(c)
+func OpenStream(ctx context.Context, c store.ComputerConfig, offer string, st *store.Store, control bool) (StreamAnswer, error) {
+	c, token, err := workspaceConnection(c, st)
 	if err != nil {
 		return StreamAnswer{}, err
 	}
 	if offer == "" || len(offer) > 96<<10 {
 		return StreamAnswer{}, errors.New("invalid WebRTC offer")
 	}
-	b, err := request(ctx, c, token, "POST", "/streams", map[string]string{"sdp": offer}, 128<<10)
+	b, err := request(ctx, c, token, "POST", "/streams", map[string]any{"sdp": offer, "control": control}, 128<<10)
 	var a StreamAnswer
 	if err != nil {
 		return a, err
@@ -110,11 +96,11 @@ func validStreamID(id string) bool {
 }
 
 // UpdateStream renews or ends a previously negotiated video lease.
-func UpdateStream(ctx context.Context, c store.ComputerConfig, id string, closeStream bool) error {
+func UpdateStream(ctx context.Context, c store.ComputerConfig, id string, closeStream bool, st *store.Store) error {
 	if !validStreamID(id) {
 		return errors.New("invalid workspace stream ID")
 	}
-	token, err := workspaceToken(c)
+	c, token, err := workspaceConnection(c, st)
 	if err != nil {
 		return err
 	}

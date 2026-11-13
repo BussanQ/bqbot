@@ -486,7 +486,7 @@ function openDialog(title, body, onSubmit) {
       }
     };
   requestAnimationFrame(() =>
-    form?.querySelector("input,textarea,select")?.focus(),
+    form?.isConnected && !form.hasAttribute("data-type-form") && form.querySelector("input,textarea,select")?.focus(),
   );
 }
 // Settings shortcuts reuse the grouped menu card; attributes are fixed literals.

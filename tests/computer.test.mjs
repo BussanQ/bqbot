@@ -4,7 +4,7 @@ import { createComputerUI } from "../web/computer.js";
 
 function setup(items = [], status = {}) {
   const calls = [], fields = new Map(), nodes = new Map();
-  const form = { elements: {} };
+  const form = { elements: {}, querySelector: () => ({}) };
   const root = { querySelector: (key) => {
     if (key === "form") return form;
     if (!nodes.has(key)) nodes.set(key, {});
@@ -84,4 +84,41 @@ test("unsupported platforms report unavailable and escape diagnostics", async ()
   assert.doesNotMatch(env.html, /data-host-action="permissions"/);
   assert.match(env.html, /&lt;script&gt;/);
   assert.match(env.html, /data-host-action="start" disabled/);
+});
+
+test("local Linux starts without connection fields, remote Bridge retains them", async () => {
+  const env = setup();
+  await env.ui.configure("bot");
+  env.form.elements.provider.value = "local-workspace";
+  env.form.elements.enabled = { checked: false };
+  env.form.onchange({ target: env.form.elements.provider });
+  assert.equal(env.form.elements.enabled.checked, true);
+  assert.equal(env.nodes.get("[data-connection]").hidden, true);
+  assert.equal(env.form.elements.url.required, false);
+  await env.save({ provider: "local-workspace", enabled: "on", url: "stale", token_env: "OLD" });
+  assert.deepEqual(env.calls.at(-1).config, { bot_id: "bot", provider: "workspace", managed: true, enabled: true, url: "", token_env: "", sandbox_id: "", host_consent: false });
+  env.form.elements.provider.value = "workspace";
+  env.form.onchange();
+  assert.equal(env.nodes.get("[data-connection]").hidden, false);
+  assert.equal(env.form.elements.token_env.required, true);
+});
+
+import { desktopPoint, keysym } from "../web/desktop-input.js";
+
+test("contain mapping keeps both desktop edges reachable and skips letterboxes", () => {
+  const rect = {left:10, top:20, width:800, height:600};
+  assert.deepEqual(desktopPoint(rect,1280,800,10,70), {x:0,y:0});
+  assert.deepEqual(desktopPoint(rect,1280,800,809.9,569.9), {x:1279,y:799});
+  assert.equal(desktopPoint(rect,1280,800,80,69), null);
+  assert.deepEqual(desktopPoint(rect,1280,800,900,700,true), {x:1279,y:799});
+  const wide = {left:0,top:0,width:1000,height:400};
+  assert.equal(desktopPoint(wide,1280,800,179,30),null);
+  assert.deepEqual(desktopPoint(wide,1280,800,180,0),{x:0,y:0});
+});
+test("keysyms preserve sided modifiers, navigation and printable Unicode", () => {
+  assert.equal(keysym("Control",2),0xffe4);
+  assert.equal(keysym("ArrowDown"),0xff54);
+  assert.equal(keysym("Z"),90);
+  assert.equal(keysym("好"),0x1000000+"好".codePointAt(0));
+  assert.equal(keysym("Unidentified"),0);
 });

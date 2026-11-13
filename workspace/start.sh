@@ -29,6 +29,7 @@ if [ "$1" = desktop ]; then
 fi
 # Chromium's lock names refer to the previous container's hostname and /tmp.
 # With the volume locked by this process they can safely be recreated.
+rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
 rm -f /home/agent/profile/SingletonLock /home/agent/profile/SingletonSocket /home/agent/profile/SingletonCookie
 export XDG_RUNTIME_DIR=/tmp/bqbot-runtime GTK_MODULES=gail:atk-bridge NO_AT_BRIDGE=0
 mkdir -pm 700 "$XDG_RUNTIME_DIR"
@@ -41,11 +42,28 @@ for property in IsEnabled ScreenReaderEnabled; do
   dbus-send --session --print-reply --dest=org.a11y.Bus /org/a11y/bus \
     org.freedesktop.DBus.Properties.Set string:org.a11y.Status string:"$property" variant:boolean:true >/dev/null
 done
+export XDG_CURRENT_DESKTOP=XFCE XDG_MENU_PREFIX=xfce-
+panel_dir="${XDG_CONFIG_HOME:-$HOME/.config}/xfce4/xfconf/xfce-perchannel-xml"
+mkdir -p "$panel_dir"
+[ -f "$panel_dir/xfce4-panel.xml" ] || cp /opt/bqbot/panel.xml "$panel_dir/xfce4-panel.xml"
 desktop openbox > /tmp/window-manager.log 2>&1 &
+# Xvnc exposes one monitor. Use the shipped JPEG as the initial wallpaper.
+background=/backdrop/screen0/monitorVNC-0/workspace0/last-image
+if ! desktop xfconf-query -c xfce4-desktop -p "$background" >/dev/null 2>&1; then
+  desktop xfconf-query -c xfce4-desktop -p "$background" -n -t string -s /usr/share/backgrounds/xfce/xfce-blue.jpg
+fi
+desktop xfdesktop >/tmp/desktop.log 2>&1 &
+desktop xfce4-panel --disable-wm-check >/tmp/panel.log 2>&1 &
+# Openbox publishes the remaining desktop area after both panels reserve space.
+i=0
+until xprop -root _NET_WORKAREA | awk -F '[=,]' 'NF >= 5 && $3 > 0 && $3 + $5 < 800 {ready=1} END {exit !ready}'; do
+  i=$((i+1)); [ "$i" -lt 100 ] || { echo "Desktop panels did not start; see /tmp/panel.log" >&2; exit 1; }
+  sleep 0.1
+done
 desktop chromium --no-sandbox --disable-dev-shm-usage --no-first-run --disable-sync \
   --disable-background-networking --force-renderer-accessibility --remote-debugging-address=127.0.0.1 \
-  --remote-debugging-port=9222 --user-data-dir=/home/agent/profile --window-position=0,0 \
-  --window-size=1280,800 about:blank >/tmp/browser.log 2>&1 &
+  --remote-debugging-port=9222 --user-data-dir=/home/agent/profile --window-position=112,70 \
+  --window-size=1056,628 about:blank >/tmp/browser.log 2>&1 &
 python3 - <<'PY'
 import time
 from urllib.request import urlopen

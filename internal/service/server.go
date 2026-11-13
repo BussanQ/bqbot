@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"bqbot/internal/composio"
+	"bqbot/internal/computer"
 	"bqbot/internal/driver"
 	"bqbot/internal/harness"
 	"bqbot/internal/remote"
@@ -29,7 +30,8 @@ const DefaultAddr = "127.0.0.1:8799"
 // Server owns an HTTP listener, but does not own or stop the harness.
 // Token is a credential: callers must never log it or put it in argv.
 type Server struct {
-	modelCapabilities sync.Map // engine name to last successful inventory
+	modelCapabilities sync.Map   // engine name to last successful inventory
+	computerMu        sync.Mutex // serialize container lifecycle with computer edits and bot deletion
 	views             workspaceViews
 	remoteMu          sync.Mutex
 	remote            *remote.Gateway
@@ -160,6 +162,14 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/bots", func(w http.ResponseWriter, r *http.Request) { v, e := s.h.Store.Bots(); result(w, v, e) })
 	mux.HandleFunc("PUT /v1/bots", s.saveBot)
 	mux.HandleFunc("DELETE /v1/bots/{bot}", s.withBot(func(w http.ResponseWriter, r *http.Request, b store.Bot) {
+		s.computerMu.Lock()
+		defer s.computerMu.Unlock()
+		if cfg, _ := s.h.Store.Computer(b.ID); cfg.Managed && cfg.Enabled {
+			if err := computer.StopLocalWorkspace(r.Context(), s.h.Store, b.ID); err != nil {
+				fail(w, err)
+				return
+			}
+		}
 		err := s.h.DeleteBot(b.ID)
 		if err == nil {
 			s.revokeWorkspaceViews(b.ID)

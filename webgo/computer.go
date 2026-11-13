@@ -65,8 +65,10 @@ func (d *Desktop) Computer(r ComputerAction) (json.RawMessage, error) {
 		v, e = api.SaveComputer(r.Config)
 	case "action":
 		v, e = api.ComputerAction(r.BotID, service.ComputerRequest{Action: r.Action, Confirmed: r.Confirmed})
+	case "start-workspace":
+		e = api.StartWorkspace(r.BotID)
 	case "stream-open":
-		v, e = api.OpenWorkspaceStream(r.BotID, r.SDP)
+		v, e = api.OpenWorkspaceStream(r.BotID, r.SDP, r.Confirmed)
 	case "stream-renew", "stream-close":
 		e = api.UpdateWorkspaceStream(r.BotID, r.StreamID, r.Kind == "stream-close")
 	case "capture-to-chat":

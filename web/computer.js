@@ -1,3 +1,4 @@
+import { bindDesktopInput, desktopPoint } from "./desktop-input.js";
 import { watchWorkspace, workspaceControls, workspaceCommand, showWorkspaceResult } from "./workspace.js";
 import { escapeHTML as esc } from "./markdown.js";
 
@@ -45,36 +46,62 @@ export function createComputerUI({ bridge, openDialog, field, dialogActions, get
   async function edit(c) {
     shutdown();
     const legacy = c.provider === "host" && !!c.url;
-    openDialog("电脑连接", `<form>${field("类型", "provider", c.provider || "host", { select: [["host", "这台电脑（内置）"], ["workspace", "Linux 工作区（Workspace Bridge）"], ["boat", "Boat 云桌面"], ["vm", "本地 / 远程 VM（Cua MCP）"]] })}${legacy ? '<label class="check-label" data-legacy><input type="checkbox" name="builtin">将旧本机 HTTP 连接改为内置驱动</label>' : ""}<div data-connection>${field("API / MCP 地址", "url", c.url || "")}${field("凭据环境变量名", "token_env", c.token_env || "")}<div data-boat>${field("Boat Sandbox ID", "sandbox_id", c.sandbox_id || "")}</div></div><label class="check-label"><input type="checkbox" name="enabled" ${c.enabled ? "checked" : ""}>启用此电脑</label><label class="check-label" data-consent><input type="checkbox" name="host_consent" ${c.host_consent ? "checked" : ""}>允许访问这台电脑的屏幕及输入设备</label><p class="form-help" data-host-help>内置本机控制需要系统授权；保存后可在“本机驱动与系统权限”中授权并启动。伙伴操作仍遵循工具审批。</p><p class="form-help" data-remote-help>Workspace Bridge 填服务根地址和令牌环境变量名。Boat 填已有 Sandbox，VM 填 Cua 的 HTTP MCP 地址。</p>${dialogActions("保存电脑")}</form>`, async (data) => {
-      const provider = data.get("provider"), builtin = provider === "host" && (!legacy || data.has("builtin"));
-      await call("save-computer", { config: { bot_id: c.bot_id, provider, url: builtin ? "" : data.get("url") || "", token_env: builtin ? "" : data.get("token_env") || "", sandbox_id: provider === "boat" ? data.get("sandbox_id") || "" : "", enabled: data.has("enabled"), host_consent: provider === "host" && data.has("host_consent") } });
+    openDialog("电脑连接", `<form>${field("类型", "provider", c.managed ? "local-workspace" : c.provider || "host", { select: [["host", "这台电脑（内置）"], ["local-workspace", "Linux 工作区（本机 Docker）"], ["workspace", "已有工作区（远程 Bridge）"], ["boat", "Boat 云桌面"], ["vm", "本地 / 远程 VM（Cua MCP）"]] })}${legacy ? '<label class="check-label" data-legacy><input type="checkbox" name="builtin">将旧本机 HTTP 连接改为内置驱动</label>' : ""}<div data-connection>${field("API / MCP 地址", "url", c.url || "")}${field("凭据环境变量名", "token_env", c.token_env || "")}<div data-boat>${field("Boat Sandbox ID", "sandbox_id", c.sandbox_id || "")}</div></div><label class="check-label"><input type="checkbox" name="enabled" ${c.enabled ? "checked" : ""}>启用此电脑</label><label class="check-label" data-consent><input type="checkbox" name="host_consent" ${c.host_consent ? "checked" : ""}>允许访问这台电脑的屏幕及输入设备</label><p class="form-help" data-host-help>内置本机控制需要系统授权；保存后可在“本机驱动与系统权限”中授权并启动。伙伴操作仍遵循工具审批。</p><p class="form-help" data-local-help>启用后自动创建或启动此伙伴的 Docker 容器。首次构建镜像可能需要几分钟。关闭会停止容器并保留文件。</p><p class="form-help" data-remote-help>Workspace Bridge 填服务根地址和令牌环境变量名。Boat 填已有 Sandbox，VM 填 Cua 的 HTTP MCP 地址。</p>${dialogActions("保存电脑")}</form>`, async (data) => {
+      const selected = data.get("provider"), managed = selected === "local-workspace";
+      const provider = managed ? "workspace" : selected, builtin = provider === "host" && (!legacy || data.has("builtin"));
+      const submitForm = body().querySelector("form");
+      const submitButton = submitForm.querySelector("[type=submit]");
+      if (managed && data.has("enabled")) submitButton.textContent = "正在启动工作区…";
+      const saved = await call("save-computer", { config: { bot_id: c.bot_id, provider, ...(managed ? { managed: true } : {}), url: builtin || managed ? "" : data.get("url") || "", token_env: builtin || managed ? "" : data.get("token_env") || "", sandbox_id: provider === "boat" ? data.get("sandbox_id") || "" : "", enabled: data.has("enabled"), host_consent: provider === "host" && data.has("host_consent") } }).finally(() => { submitButton.textContent = "保存电脑"; });
+      if (managed && saved.enabled && submitForm.isConnected && submitForm.closest("dialog")?.open) return panel(saved, true);
       notify("电脑配置已保存");
     });
     const root = body(), form = root.querySelector("form");
-    const update = () => {
+    const update = (event) => {
       const provider = form.elements.provider.value;
       const builtin = provider === "host" && (!legacy || form.elements.builtin.checked);
-      root.querySelector("[data-connection]").hidden = builtin;
-      for (const name of ["url", "token_env", "sandbox_id"]) form.elements[name].disabled = builtin || (name === "sandbox_id" && provider !== "boat");
-      form.elements.url.required = !builtin;
+      const managed = provider === "local-workspace";
+      if (event?.target === form.elements.provider && managed) form.elements.enabled.checked = true;
+      root.querySelector("[data-local-help]").hidden = !managed;
+      root.querySelector("[data-connection]").hidden = builtin || managed;
+      for (const name of ["url", "token_env", "sandbox_id"]) form.elements[name].disabled = builtin || managed || (name === "sandbox_id" && provider !== "boat");
+      form.elements.url.required = !builtin && !managed;
       form.elements.token_env.required = provider === "workspace" || provider === "boat";
       form.elements.url.placeholder = provider === "workspace" ? "http://127.0.0.1:18443" : "";
       form.elements.token_env.placeholder = provider === "workspace" ? "BQBOT_WORKSPACE_TOKEN" : "";
       root.querySelector("[data-boat]").hidden = provider !== "boat";
       root.querySelector("[data-consent]").hidden = provider !== "host";
       root.querySelector("[data-host-help]").hidden = !builtin;
-      root.querySelector("[data-remote-help]").hidden = builtin;
+      root.querySelector("[data-remote-help]").hidden = builtin || managed;
       if (legacy) root.querySelector("[data-legacy]").hidden = provider !== "host";
       if (provider === "boat" && !form.elements.url.value) form.elements.url.value = "https://boat.dev/api/v1";
     };
     form.onchange = update;
     update();
   }
-  async function panel(c) {
+  async function panel(c, ready = false) {
     shutdown(); const current = generation;
+    if (c.managed && !ready) {
+      openDialog("Linux 工作区", '<p class="form-help" data-starting>正在启动伙伴的 Docker 容器…</p>');
+      const progress = body().querySelector("[data-starting]");
+      try {
+        await call("start-workspace", { bot_id: c.bot_id });
+      } catch (error) {
+        if (progress.isConnected) progress.textContent = error.message;
+        return;
+      }
+      if (current !== generation || !progress.isConnected || !progress.closest("dialog")?.open) return;
+    }
     const bot = getBots().find((b) => b.id === c.bot_id);
     const workspace = c.provider === "workspace";
-    openDialog(`${bot?.name || "伙伴"}的电脑`, `<p class="form-help" data-computer-status>正在获取画面…</p><img data-computer-frame alt="电脑实时截图" style="width:100%;max-height:55vh;object-fit:contain;border-radius:8px" hidden>${workspace ? '<video data-workspace-video muted autoplay playsinline hidden></video>' : ""}<label class="check-label"><input type="checkbox" data-control>允许当前面板发送鼠标和键盘输入</label><div class="tool-buttons"><button type="button" class="secondary" data-shot>刷新截图</button>${workspace ? '<button type="button" class="secondary" data-live>连接实时画面</button>' : ""}<button type="button" class="secondary" data-capture>发送截图到当前对话</button><button type="button" class="secondary" data-key="Return">Enter</button><button type="button" class="secondary" data-key="Escape">Esc</button><button type="button" class="secondary" data-scroll="up">向上滚动</button><button type="button" class="secondary" data-scroll="down">向下滚动</button></div><form data-type-form>${field("输入文字", "text", "")}${dialogActions("输入到电脑")}</form>${workspace ? workspaceControls(field) : ""}`);
+    openDialog(`${bot?.name || "伙伴"}的电脑`, `<div class="computer-toolbar"><span class="form-help" data-computer-status role="status">正在获取画面…</span>
+      ${workspace ? '<button type="button" class="secondary" data-takeover aria-pressed="false">接管电脑</button>' : ""}</div>
+      <div class="computer-screen" tabindex="-1" aria-label="电脑画面"><img data-computer-frame alt="电脑截图" draggable="false" hidden>
+      ${workspace ? '<video data-workspace-video muted autoplay playsinline disablepictureinpicture hidden></video>' : ""}</div>
+      <details class="computer-more"><summary>截图与更多操作</summary>
+      <label class="check-label"><input type="checkbox" data-control>允许点按截图和发送单次操作</label>
+      <div class="tool-buttons"><button type="button" class="secondary" data-shot>刷新截图</button>${workspace ? '<button type="button" class="secondary" data-live>连接实时画面</button>' : ""}<button type="button" class="secondary" data-capture>发送截图到当前对话</button><button type="button" class="secondary" data-key="Return">Enter</button><button type="button" class="secondary" data-key="Escape">Esc</button><button type="button" class="secondary" data-scroll="up">向上滚动</button><button type="button" class="secondary" data-scroll="down">向下滚动</button></div>
+      <form data-type-form>${field("输入文字", "text", "")}${dialogActions("输入到电脑")}</form>${workspace ? workspaceControls(field) : ""}</details>`);
     const root = body(), image = root.querySelector("[data-computer-frame]"), status = root.querySelector("[data-computer-status]");
     const video = root.querySelector("[data-workspace-video]");
     let pending = false, frame = null, live = false, liveReason = "";
@@ -96,27 +123,48 @@ export function createComputerUI({ bridge, openDialog, field, dialogActions, get
       finally { pending = false; }
     };
     const poll = async () => { await refresh(); if (alive()) setTimeout(poll, 3000); };
-    const startVideo = () => {
+    const stage = root.querySelector(".computer-screen"), button = root.querySelector("[data-takeover]");
+    let requesting = false, unbind;
+    function setControl(active) {
+      stage.classList.toggle("controlled", active);
+      button.textContent = active ? "释放接管" : requesting ? "取消接管" : "接管电脑";
+      button.setAttribute("aria-pressed", String(active));
+    }
+    const startVideo = (takeover = false) => {
       stopVideo?.();
+      requesting = takeover;
+      setControl(false);
+      if (image.src) image.hidden = false;
       live = false;
       video.hidden = true;
-      liveReason = "正在连接实时画面…";
+      liveReason = takeover ? "正在接管桌面…" : "正在连接实时画面…";
       status.textContent = liveReason;
       stopVideo = watchWorkspace(video, call, c.bot_id, () => {
         if (!alive()) return;
         live = true; liveReason = ""; video.hidden = false; image.hidden = true;
-        status.textContent = "WebRTC 实时画面";
+        status.textContent = unbind ? "已接管 · Shift + Esc 释放" : requesting ? "正在接管桌面…" : "WebRTC 实时画面";
       }, (reason) => {
         if (!alive()) return;
         live = false; video.hidden = true; liveReason = reason + " · 已切换到截图预览";
+        requesting = false; setControl(false);
         status.textContent = liveReason; refresh();
-      });
+      }, takeover ? {
+        attach(send) {
+          if (!alive()) return;
+          unbind = bindDesktopInput(stage, video, send, () => { if (alive()) startVideo(false); });
+          setControl(true); status.textContent = "已接管 · Shift + Esc 释放";
+        },
+        detach() {
+          unbind?.(); unbind = null; requesting = false; setControl(false);
+        },
+      } : null);
     };
     const target = root.querySelector(".workspace-tools [name=target]");
     if (target) target.onchange = () => {
       root.querySelector("[name=selector]").replaceChildren(new Option("请先读取网页", ""));
     };
     root.onclick = run(async (e) => {
+      if (e.target.closest("[data-takeover]")) { startVideo(!requesting); return; }
       if (e.target.closest("[data-shot]")) {
         if (video) { stopVideo?.(); live = false; liveReason = ""; video.hidden = true; }
         await refresh();
@@ -141,11 +189,9 @@ export function createComputerUI({ bridge, openDialog, field, dialogActions, get
       if (scroll) await control({ kind: "scroll", direction: scroll.dataset.scroll, x: Math.floor((live ? video.videoWidth : frame?.width || 0) / 2), y: Math.floor((live ? video.videoHeight : frame?.height || 0) / 2) });
       const shown = live ? video : image;
       const width = live ? video.videoWidth : frame?.width, height = live ? video.videoHeight : frame?.height;
-      if (e.target === shown && width && height) {
-        const rect = shown.getBoundingClientRect(), scale = Math.min(rect.width / width, rect.height / height);
-        const left = rect.left + (rect.width - width * scale) / 2, top = rect.top + (rect.height - height * scale) / 2;
-        const x = Math.floor((e.clientX - left) / scale), y = Math.floor((e.clientY - top) / scale);
-        if (x >= 0 && y >= 0 && x < width && y < height) await control({ kind: "click", x, y });
+      if (!requesting && root.querySelector("[data-control]").checked && e.target === shown && width && height) {
+        const pos = desktopPoint(shown.getBoundingClientRect(), width, height, e.clientX, e.clientY);
+        if (pos) await control({ kind: "click", ...pos });
       }
     });
     root.querySelector("form").onsubmit = run(async (e) => { e.preventDefault(); const input = e.target.elements.text; await control({ kind: "type", text: input.value }); input.value = ""; await refresh(); });

@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// ComputerConfig selects an existing desktop. Credentials are environment references.
+// ComputerConfig selects a desktop. Managed selects a per-bot local Docker workspace.
 // Host access requires separate explicit consent, even when the connection is enabled.
 type ComputerConfig struct {
 	BotID       string `json:"bot_id"`
@@ -19,6 +19,7 @@ type ComputerConfig struct {
 	HostConsent bool   `json:"host_consent"`
 	URL         string `json:"url"`
 	TokenEnv    string `json:"token_env,omitempty"`
+	Managed     bool   `json:"managed,omitempty"`
 	SandboxID   string `json:"sandbox_id,omitempty"`
 }
 
@@ -28,6 +29,12 @@ func (c ComputerConfig) Validate() error {
 	}
 	if c.Provider != "boat" && c.Provider != "vm" && c.Provider != "host" && c.Provider != "workspace" {
 		return errors.New("computer provider must be boat, vm, workspace or host")
+	}
+	if c.Managed {
+		if c.Provider != "workspace" || c.URL != "" || c.TokenEnv != "" || c.SandboxID != "" || c.HostConsent {
+			return errors.New("managed Linux workspaces use automatic local connection settings")
+		}
+		return nil
 	}
 	if c.Provider == "host" && c.Enabled && !c.HostConsent {
 		return errors.New("host control requires explicit consent")
@@ -112,4 +119,12 @@ func (s *Store) Computer(botID string) (ComputerConfig, error) {
 		}
 	}
 	return ComputerConfig{}, errors.New("computer is not configured")
+}
+
+// ManagedWorkspaceDir is private service state, outside the bot's working directory.
+func (s *Store) ManagedWorkspaceDir(id string) (string, error) {
+	if !validID(id) {
+		return "", errors.New("invalid workspace bot ID")
+	}
+	return filepath.Abs(filepath.Join(s.dir, "managed-workspaces", id))
 }

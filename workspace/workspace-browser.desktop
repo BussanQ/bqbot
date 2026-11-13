@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Workspace Browser
+Name[zh_CN]=工作区浏览器
+Exec=chromium --no-sandbox --user-data-dir=/home/agent/profile --new-window about:blank
+Icon=chromium
+Categories=Network;WebBrowser;
+StartupNotify=false

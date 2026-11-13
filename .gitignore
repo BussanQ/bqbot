@@ -9,3 +9,5 @@ resources/darwin/cua-driver/
 coverage.out
 
 /workspace/.build/
+
+/resources/workspace-image/

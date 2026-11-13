@@ -106,7 +106,11 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*h
 const maxResponseBytes = 64 << 20
 
 func (c *Client) do(method, path string, body, out any) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	return c.doTimeout(method, path, body, out, 45*time.Second)
+}
+
+func (c *Client) doTimeout(method, path string, body, out any, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	resp, err := c.request(ctx, method, path, body)
 	if err != nil {

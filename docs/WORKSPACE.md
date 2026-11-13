@@ -8,7 +8,13 @@
 
 bqbot 沿用现有对话记忆、转交和工具审批。内置伙伴还会读取当前工作目录中可选的 `AGENTS.md`（最大 32 KiB）。私人对话的默认目录是 `~/.bqbot/work/<bot-id>/`，频道使用频道目录。这与 Linux 容器中的桌面文件是两个位置。
 
-## 启动一台工作区
+## 从桌面启动本机工作区
+
+启动 Docker Desktop 或 Docker Engine，在伙伴的「电脑连接」中选择「Linux 工作区（本机 Docker）」，勾选「启用此电脑」并保存。应用会为该伙伴创建容器，自动分配本机端口和 Bridge 凭据，等桌面就绪后打开画面。首次缺少镜像时，安装包会使用随附的构建资源生成镜像，需要联网下载 Linux 软件包。源码开发可先运行 `python3 -I scripts/prepare-workspace.py` 准备这些资源。
+
+取消启用并保存可停止容器。再次启用会复用该伙伴的容器、浏览器配置和文件。模型服务配置只用于聊天推理，手动查看桌面无需模型密钥。
+
+## 连接自行部署的工作区
 
 从仓库根目录执行以下命令，需要 Go、Docker 和 Docker Compose。令牌应保存在自己的凭据管理器中，在重建工作区或启动桌面客户端时使用同一个值。
 
@@ -21,14 +27,15 @@ go run .
 
 如果本机已有 `bqbot-workspace:local` 镜像，可以直接用 `docker compose -p bqbot-desktop -f workspace/compose.yaml up --no-build --pull never -d` 启动。
 
-在 bqbot 对话输入区点电脑图标，选择「Linux 工作区（Workspace Bridge）」。地址填 `http://127.0.0.1:18443`，凭据环境变量名填 `BQBOT_WORKSPACE_TOKEN`，勾选「启用此电脑」后保存。再次点电脑图标即可观看实时画面。内置 bqbot 和已有 CLI 伙伴可以调用工作区工具。OpenAI 兼容 API 和 Echo 伙伴也可以供用户打开电脑面板。
+在 bqbot 对话输入区点电脑图标，选择「已有工作区（远程 Bridge）」。地址填 `http://127.0.0.1:18443`，凭据环境变量名填 `BQBOT_WORKSPACE_TOKEN`，勾选「启用此电脑」后保存。再次点电脑图标即可观看实时画面。内置 bqbot 和已有 CLI 伙伴可以调用工作区工具。OpenAI 兼容 API 和 Echo 伙伴也可以供用户打开电脑面板。
 
-Xvnc 提供一台 1280×800 Linux 桌面。Chromium 的配置与桌面的 `/home/agent/workspace` 分别存放在 Compose 命名卷中。运行 `docker compose -p bqbot-desktop -f workspace/compose.yaml down` 停止实例并保留数据。使用相同项目名重新启动会继续使用这两个卷。为另一位伙伴建立独立桌面时，使用不同的项目名、令牌、Bridge 和媒体端口。跨架构构建客户端可通过 `TARGETARCH=arm64` 或 `TARGETARCH=amd64` 选择工作区所在机器的架构。
+Xvnc 提供一台 1280×800 Linux 桌面。顶部的应用菜单可以启动程序，底部 Dock 提供显示桌面、浏览器、文件管理器和终端。Chromium 的配置与桌面的 `/home/agent/workspace` 分别存放在 Compose 命名卷中。运行 `docker compose -p bqbot-desktop -f workspace/compose.yaml down` 停止实例并保留数据。使用相同项目名重新启动会继续使用这两个卷。为另一位伙伴建立独立桌面时，使用不同的项目名、令牌、Bridge 和媒体端口。跨架构构建客户端可通过 `TARGETARCH=arm64` 或 `TARGETARCH=amd64` 选择工作区所在机器的架构。
 
 ## 操作桌面与浏览器
 
 - **实时画面**使用 WebRTC 的 VP8 视频。关闭面板会结束视频会话，禁用或更换该伙伴的电脑会撤销观看连接。媒体端口不可达时，面板会提示原因并切换为截图预览。
-- **坐标操作**需先勾选面板的输入开关。可以点击视频或截图、输入文字、发送按键和滚动。点击和截图使用 Xvnc 的 RFB framebuffer。
+- **接管电脑**：点画面上方的「接管电脑」，即可在实时桌面上移动鼠标、左右键点击、拖动、滚动和使用键盘组合键。点「释放接管」或按 **Shift + Esc** 返回观看；关闭面板或应用失去焦点也会释放接管。接管期间，其他查看者和 Agent 可读取桌面，但不能同时操作它。
+- **截图模式**：展开「截图与更多操作」，勾选允许单次操作后，可以点按截图、发送文字或按键。实时接管需要 WebRTC 连接。旧版远程 Bridge 请先重新运行 `./workspace/build.sh` 和上面的 Compose 构建命令。旧版本机托管工作区在下次打开时会下载 Xfce 桌面组件并重启原容器，保留工作区文件和浏览器配置。
 - **浏览器操作**可以选择标签页、打开网址、读取页面、选择网页元素、点击或填写。操作通过本机 Chromium 的 CDP 连接执行。**辅助功能**可以读取 AT-SPI 树，从列表中选择并激活桌面控件。找不到原控件时重新读取即可。
 - **Agent 操作**使用既有的 `external_computer` 工具。浏览器支持 `browser_tabs`、`browser_open`、`browser_read`、`browser_click`、`browser_fill`。GUI 支持 `gui_tree`、`gui_invoke`，以及截图、坐标、文字、按键和滚动。每次操作经过原有 MCP 审批，consult 模式没有电脑工具。可以在聊天中试用「打开这个网址，读取页面标题，再截一张图」。
 

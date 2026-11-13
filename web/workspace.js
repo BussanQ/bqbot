@@ -1,15 +1,15 @@
-// Only session descriptions cross the Go bridge. Media is receive-only and
-// inputs continue through the same confirmed operations as the snapshot panel.
-export function watchWorkspace(video, call, botID, ready, fallback) {
-  let peer, session, heartbeat, closed = false;
+export function watchWorkspace(video, call, botID, ready, fallback, input = null) {
+  let peer, channel, session, heartbeat, inputTimer, closed = false;
   const closeSession = (id) => call("stream-close", { bot_id: botID, stream_id: id }).catch(() => {});
   const observer = new MutationObserver(() => { if (!video.isConnected) stop(); });
-  observer.observe(video.parentElement, { childList: true });
+  observer.observe(video.closest("dialog") || video.parentElement, { childList: true, subtree: true });
   const timeout = setTimeout(() => fail("实时画面连接超时"), 16000);
   function stop() {
     if (closed) return;
     closed = true;
     clearInterval(heartbeat);
+    clearTimeout(inputTimer);
+    input?.detach();
     clearTimeout(timeout);
     observer.disconnect();
     video.onloadeddata = null;
@@ -25,6 +25,21 @@ export function watchWorkspace(video, call, botID, ready, fallback) {
   async function start() {
     if (!globalThis.RTCPeerConnection) throw new Error("此 WebView 没有提供 WebRTC");
     peer = new RTCPeerConnection({ iceServers: [] });
+    if (input) {
+      channel = peer.createDataChannel("desktop-input", { ordered:true });
+      inputTimer = setTimeout(() => fail("接管连接超时"), 16000);
+      channel.onclose = () => fail("接管已断开");
+      channel.onmessage = ({data}) => {
+        if (closed) return;
+        if (data !== "ready") return fail(data === "busy" ? "桌面正在被操作，请稍后接管" : "无法接管桌面");
+        clearTimeout(inputTimer);
+        input.attach((event) => {
+          if (closed || channel.readyState !== "open") return;
+          if (channel.bufferedAmount > 65536) { fail("接管连接拥塞"); return; }
+          channel.send(JSON.stringify(event));
+        });
+      };
+    }
     peer.addTransceiver("video", { direction: "recvonly" });
     peer.ontrack = ({ track }) => {
       video.srcObject = new MediaStream([track]);
@@ -49,9 +64,10 @@ export function watchWorkspace(video, call, botID, ready, fallback) {
       });
     }
     if (closed) return;
-    const answer = await call("stream-open", { bot_id: botID, sdp: peer.localDescription.sdp });
+    const answer = await call("stream-open", { bot_id: botID, sdp: peer.localDescription.sdp, confirmed: !!input });
     if (closed) { closeSession(answer.id); return; }
     session = answer.id;
+    if (input && !answer.control) throw new Error("请更新远程 Workspace Bridge 以使用接管");
     await peer.setRemoteDescription({ type: "answer", sdp: answer.sdp });
     if (closed) return;
     heartbeat = setInterval(() => {
