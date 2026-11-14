@@ -15,6 +15,7 @@ import (
 
 // ComputerAction exposes desktop operations without exposing service credentials.
 type ComputerAction struct {
+	Path       string               `json:"path,omitempty"`
 	Kind       string               `json:"kind"`
 	BotID      string               `json:"bot_id"`
 	ThreadID   string               `json:"thread_id"`
@@ -65,6 +66,12 @@ func (d *Desktop) Computer(r ComputerAction) (json.RawMessage, error) {
 		v, e = api.SaveComputer(r.Config)
 	case "action":
 		v, e = api.ComputerAction(r.BotID, service.ComputerRequest{Action: r.Action, Confirmed: r.Confirmed})
+	case "files-list":
+		v, e = api.WorkspaceFiles(r.BotID, r.Path)
+	case "file-upload":
+		v, e = uploadComputerFile(api, r.BotID, r.Path)
+	case "file-download":
+		v, e = downloadComputerFile(api, r.BotID, r.Path)
 	case "start-workspace":
 		e = api.StartWorkspace(r.BotID)
 	case "stream-open":

@@ -103,7 +103,7 @@ func atomicWorkspaceFile(path, value string) error {
 	return os.Rename(f.Name(), path)
 }
 
-const desktopRevision = "xfce-v1"
+const desktopRevision = "xfce-files-v1"
 const managedImage = "bqbot-workspace:" + desktopRevision
 
 func workspaceImage(ctx context.Context) error {
@@ -128,7 +128,8 @@ func workspaceImage(ctx context.Context) error {
 func (d localDesktop) ensureDesktop(ctx context.Context, cid string) error {
 	stamp := filepath.Join(d.dir, "desktop-revision")
 	want := cid + " " + desktopRevision
-	if data, err := os.ReadFile(stamp); err == nil && string(data) == want {
+	data, _ := os.ReadFile(stamp)
+	if string(data) == want {
 		return nil
 	}
 	label, err := docker(ctx, "", "inspect", "--format", `{{index .Config.Labels "dev.bqbot.desktop"}}`, cid)
@@ -150,13 +151,15 @@ func (d localDesktop) ensureDesktop(ctx context.Context, cid string) error {
 		_, err := docker(ctx, "", "cp", src, cid+":"+dst)
 		return err
 	}
-	for _, name := range []string{"install-desktop.sh", "workspace-browser.desktop", "panel.xml"} {
-		if err := stage(filepath.Join(dir, name), "/opt/bqbot/"+name); err != nil {
-			return err
+	if label != "xfce-v1" && string(data) != cid+" xfce-v1" {
+		for _, name := range []string{"install-desktop.sh", "workspace-browser.desktop", "panel.xml"} {
+			if err := stage(filepath.Join(dir, name), "/opt/bqbot/"+name); err != nil {
+				return err
+			}
 		}
-	}
-	if _, err = docker(ctx, "", "exec", "--user", "0", cid, "sh", "/opt/bqbot/install-desktop.sh"); err != nil {
-		return fmt.Errorf("安装 Linux 桌面组件失败：%w", err)
+		if _, err = docker(ctx, "", "exec", "--user", "0", cid, "sh", "/opt/bqbot/install-desktop.sh"); err != nil {
+			return fmt.Errorf("安装 Linux 桌面组件失败：%w", err)
+		}
 	}
 	arch, err := docker(ctx, "", "exec", cid, "uname", "-m")
 	if err != nil {

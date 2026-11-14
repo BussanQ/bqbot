@@ -63,6 +63,7 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*h
 		return nil, c.initErr
 	}
 	var reader io.Reader
+	var length int64
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
@@ -72,18 +73,30 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*h
 			return nil, errors.New("request is too large")
 		}
 		reader = bytes.NewReader(data)
+		length = int64(len(data))
+	}
+	return c.rawRequest(ctx, method, path, reader, length, "application/json")
+}
+
+func (c *Client) rawRequest(ctx context.Context, method, path string, reader io.Reader, length int64, contentType string) (*http.Response, error) {
+	if c.initErr != nil {
+		return nil, c.initErr
+	}
+	if length == 0 {
+		reader = nil
 	}
 	r, err := http.NewRequestWithContext(ctx, method, c.url+path, reader)
 	if err != nil {
 		return nil, errors.New("invalid service request")
 	}
+	r.ContentLength = length
 	r.Header.Set("Authorization", "Bearer "+c.token)
 	r.Header.Set("Accept", "application/json")
 	if path == "/v1/events" {
 		r.Header.Set("Accept", "text/event-stream")
 	}
-	if body != nil {
-		r.Header.Set("Content-Type", "application/json")
+	if reader != nil {
+		r.Header.Set("Content-Type", contentType)
 	}
 	resp, err := c.http.Do(r)
 	if err != nil {

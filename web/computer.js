@@ -1,3 +1,4 @@
+import { bindWorkspaceFiles, workspaceFilesMarkup } from "./workspace-files.js";
 import { bindDesktopInput, desktopPoint } from "./desktop-input.js";
 import { watchWorkspace, workspaceControls, workspaceCommand, showWorkspaceResult } from "./workspace.js";
 import { escapeHTML as esc } from "./markdown.js";
@@ -94,14 +95,16 @@ export function createComputerUI({ bridge, openDialog, field, dialogActions, get
     }
     const bot = getBots().find((b) => b.id === c.bot_id);
     const workspace = c.provider === "workspace";
-    openDialog(`${bot?.name || "伙伴"}的电脑`, `<div class="computer-toolbar"><span class="form-help" data-computer-status role="status">正在获取画面…</span>
+    openDialog(`${bot?.name || "伙伴"}的电脑`, `<div class="computer-toolbar">
+      ${workspace ? '<div class="computer-views" aria-label="电脑视图"><button type="button" class="secondary" data-view="desktop" aria-pressed="true">桌面</button><button type="button" class="secondary" data-view="files" aria-pressed="false">文件</button></div>' : ""}
+      <span class="form-help" data-computer-status role="status">正在获取画面…</span>
       ${workspace ? '<button type="button" class="secondary" data-takeover aria-pressed="false">接管电脑</button>' : ""}</div>
       <div class="computer-screen" tabindex="-1" aria-label="电脑画面"><img data-computer-frame alt="电脑截图" draggable="false" hidden>
       ${workspace ? '<video data-workspace-video muted autoplay playsinline disablepictureinpicture hidden></video>' : ""}</div>
       <details class="computer-more"><summary>截图与更多操作</summary>
       <label class="check-label"><input type="checkbox" data-control>允许点按截图和发送单次操作</label>
       <div class="tool-buttons"><button type="button" class="secondary" data-shot>刷新截图</button>${workspace ? '<button type="button" class="secondary" data-live>连接实时画面</button>' : ""}<button type="button" class="secondary" data-capture>发送截图到当前对话</button><button type="button" class="secondary" data-key="Return">Enter</button><button type="button" class="secondary" data-key="Escape">Esc</button><button type="button" class="secondary" data-scroll="up">向上滚动</button><button type="button" class="secondary" data-scroll="down">向下滚动</button></div>
-      <form data-type-form>${field("输入文字", "text", "")}${dialogActions("输入到电脑")}</form>${workspace ? workspaceControls(field) : ""}</details>`);
+      <form data-type-form>${field("输入文字", "text", "")}${dialogActions("输入到电脑")}</form>${workspace ? workspaceControls(field) : ""}</details>${workspace ? workspaceFilesMarkup : ""}`);
     const root = body(), image = root.querySelector("[data-computer-frame]"), status = root.querySelector("[data-computer-status]");
     const video = root.querySelector("[data-workspace-video]");
     let pending = false, frame = null, live = false, liveReason = "";
@@ -111,7 +114,7 @@ export function createComputerUI({ bridge, openDialog, field, dialogActions, get
       return call("action", { bot_id: c.bot_id, action, confirmed: true });
     };
     const refresh = async () => {
-      if (!alive() || pending || live) return;
+      if (!alive() || pending || live || stage.hidden) return;
       pending = true;
       try {
         const next = await call("action", { bot_id: c.bot_id, action: { kind: "screenshot" } });
@@ -159,6 +162,24 @@ export function createComputerUI({ bridge, openDialog, field, dialogActions, get
         },
       } : null);
     };
+    if (workspace) {
+      const files = root.querySelector(".workspace-files");
+      const refreshFiles = bindWorkspaceFiles(files, (kind, path) => call(kind, { bot_id: c.bot_id, path }));
+      const tabs = root.querySelector(".computer-views");
+      tabs.onclick = (event) => {
+        const tab = event.target.closest("[data-view]");
+        if (!tab || tab.getAttribute("aria-pressed") === "true") return;
+        const browse = tab.dataset.view === "files";
+        for (const item of tabs.children) item.setAttribute("aria-pressed", String(item === tab));
+        stage.hidden = browse; status.hidden = browse; button.hidden = browse;
+        root.querySelector(".computer-more").hidden = browse;
+        files.hidden = !browse;
+        if (browse) {
+          stopVideo?.(); live = false; video.hidden = true;
+          refreshFiles();
+        } else { startVideo(); }
+      };
+    }
     const target = root.querySelector(".workspace-tools [name=target]");
     if (target) target.onchange = () => {
       root.querySelector("[name=selector]").replaceChildren(new Option("请先读取网页", ""));

@@ -8,7 +8,7 @@ RUN useradd -m -u 1000 agent && mkdir -p /home/agent/workspace /home/agent/profi
 FROM desktop
 COPY workspace/install-desktop.sh workspace/workspace-browser.desktop /opt/bqbot/
 RUN sh /opt/bqbot/install-desktop.sh
-LABEL dev.bqbot.desktop="xfce-v1"
+LABEL dev.bqbot.desktop="xfce-files-v1"
 ARG TARGETARCH
 ARG BRIDGE_DIR=.build
 COPY workspace/${BRIDGE_DIR}/bridge-${TARGETARCH} /usr/local/bin/bqbot-workspace

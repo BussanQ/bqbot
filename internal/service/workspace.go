@@ -24,6 +24,7 @@ type workspaceViews struct {
 }
 
 func (s *Server) workspaceRoutes(mux *http.ServeMux) {
+	s.workspaceFileRoutes(mux)
 	mux.HandleFunc("POST /v1/computers/{bot}/start", s.withBot(func(w http.ResponseWriter, r *http.Request, b store.Bot) {
 		s.computerMu.Lock()
 		defer s.computerMu.Unlock()

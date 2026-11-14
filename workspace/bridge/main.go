@@ -27,7 +27,7 @@ const toolName = "workspace_action"
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--bridge-revision" {
-		fmt.Println("input-v1")
+		fmt.Println("files-v1")
 		return
 	}
 	secret, err := hex.DecodeString(os.Getenv("BQBOT_WORKSPACE_HASH"))
@@ -48,7 +48,16 @@ func main() {
 		log.Fatal(err)
 	}
 	defer video.close()
+	root, err := os.OpenRoot("/home/agent/workspace")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer root.Close()
 	mux := http.NewServeMux()
+	files := workspaceFiles(root)
+	mux.HandleFunc("GET /files/list", files)
+	mux.HandleFunc("GET /files/content", files)
+	mux.HandleFunc("PUT /files/content", files)
 	mux.Handle("POST /mcp", &bridge{schema: raw, gate: &video.gate, slot: make(chan struct{}, 1)})
 	mux.HandleFunc("POST /streams", video.offer)
 	mux.HandleFunc("PUT /streams/{id}", video.renew)

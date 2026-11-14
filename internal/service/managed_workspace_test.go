@@ -1,7 +1,10 @@
 package service
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -54,6 +57,38 @@ func TestManagedWorkspaceDockerLifecycle(t *testing.T) {
 	if _, err = fmt.Sscanf(string(area), "_NET_WORKAREA(CARDINAL) = %d, %d, %d, %d", &x, &y, &width, &height); err != nil ||
 		x != 0 || y <= 0 || width != shot.Width || height <= 0 || y+height >= shot.Height {
 		t.Fatalf("expected menu and dock within %dx%d framebuffer, got %s", shot.Width, shot.Height, area)
+	}
+	// Transfer through both authenticated HTTP hops, including an empty file.
+	if err := exec.Command("docker", "exec", name, "mkdir", "-p", "/home/agent/workspace/项目").Run(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := api.WorkspaceFiles(b.ID, ".")
+	if err != nil || len(entries) != 1 || entries[0].Kind != "dir" || entries[0].Name != "项目" {
+		t.Fatalf("root list: %v %v", entries, err)
+	}
+	ctx := context.Background()
+	for _, sample := range []struct {
+		name string
+		data []byte
+	}{
+		{"图 & #1.bin", bytes.Repeat([]byte{0, 255, 1, 2, 3}, 250000)}, {"空.txt", nil},
+	} {
+		path := "项目/" + sample.name
+		if err = api.UploadWorkspaceFile(ctx, b.ID, path, bytes.NewReader(sample.data), int64(len(sample.data))); err != nil {
+			t.Fatal(err)
+		}
+		var conflict *HTTPError
+		if err = api.UploadWorkspaceFile(ctx, b.ID, path, bytes.NewReader([]byte("x")), 1); !errors.As(err, &conflict) || conflict.StatusCode != 409 {
+			t.Fatalf("expected conflict, got %v", err)
+		}
+		var dst bytes.Buffer
+		if err = api.DownloadWorkspaceFile(ctx, b.ID, path, &dst); err != nil || !bytes.Equal(sample.data, dst.Bytes()) {
+			t.Fatalf("round trip %s: %v", path, err)
+		}
+	}
+	entries, err = api.WorkspaceFiles(b.ID, "项目")
+	if err != nil || len(entries) != 2 {
+		t.Fatal(entries, err)
 	}
 	cfg.Enabled = false
 	if _, err = api.SaveComputer(cfg); err != nil {

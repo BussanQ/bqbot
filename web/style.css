@@ -2061,6 +2061,16 @@ dialog:has(.computer-screen) { width: min(1080px, calc(100vw - 32px)); max-heigh
 dialog:has(.computer-screen) .dialog-content { display: flex; flex-direction: column; overflow: hidden; padding: 10px 16px 14px; }
 #dialog-body:has(.computer-screen) { display: flex; flex-direction: column; min-height: 0; gap: 8px; }
 .computer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: none; }
+.computer-views, .file-toolbar { display: flex; align-items: center; gap: 6px; }
+.computer-views button[aria-pressed="true"] { color: var(--accent); background: var(--soft); border-color: var(--accent); }
+.workspace-files { display: flex; flex-direction: column; min-height: 0; height: min(64vh, 65vw); gap: 8px; }
+.file-toolbar { flex-wrap: wrap; }
+.file-path { flex: 1; min-width: 6em; overflow-wrap: anywhere; }
+.file-list { overflow: auto; min-height: 0; }
+.file-row { display: grid; grid-template-columns: minmax(0, 1fr) 6em 4em; align-items: center; gap: 8px; min-height: 38px; border-bottom: 1px solid var(--line); }
+.file-name { text-align: left; overflow-wrap: anywhere; }
+button.file-name { color: var(--accent); font: inherit; background: none; border: 0; padding: 4px 0; cursor: pointer; }
+.file-row small { color: var(--muted); }
 .computer-screen { position: relative; flex: 0 1 auto; min-height: 0; height: min(64vh, 65vw); background: #101311; outline-offset: 2px; }
 .computer-screen img, .computer-screen video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; user-select: none; }
 .computer-screen.controlled { outline: 2px solid var(--accent); touch-action: none; }

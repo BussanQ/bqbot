@@ -47,6 +47,7 @@ export interface Bot {
 
 /** ComputerAction exposes desktop operations without exposing service credentials. */
 export interface ComputerAction {
+  path?: string;
   kind: string;
   bot_id: string;
   thread_id: string;
